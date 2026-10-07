@@ -4,6 +4,10 @@
 
 PonWrt 基于 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt)，增加了对 Airoha AN7581 和 AN7583 PON 设备的支持。
 
+> 📌 本仓库是 fork，额外包含一批实机调试出来的硬件修复（面板 LED、面板口序、GPY211C 复位竞态、
+> IPTV 组播 MAC 学习、NPU 监控面板）。**这些内容记录在 [README.zh-CN.md](README.zh-CN.md)**，
+> 本文件保持与上游一致。
+
 ## ⚠️ 免责声明
 
 PonWrt 是一个用于研究和开发的开源光猫固件项目。
