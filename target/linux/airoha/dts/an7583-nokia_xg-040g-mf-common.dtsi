@@ -269,6 +269,8 @@
 	status = "okay";
 
 	color = <LED_COLOR_ID_GREEN>;
+	function = LED_FUNCTION_LAN;
+	function-enumerator = <2>;
 	active-low;
 };
 
@@ -291,6 +293,8 @@
 	status = "okay";
 
 	color = <LED_COLOR_ID_GREEN>;
+	function = LED_FUNCTION_LAN;
+	function-enumerator = <3>;
 	active-low;
 };
 
@@ -313,6 +317,8 @@
 	status = "okay";
 
 	color = <LED_COLOR_ID_GREEN>;
+	function = LED_FUNCTION_LAN;
+	function-enumerator = <4>;
 	active-low;
 };
 
