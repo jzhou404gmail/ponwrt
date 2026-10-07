@@ -35,3 +35,16 @@ git-src
 .cproject
 .ccache
 .vscode*
+
+# 本机构建配置备份（./build.sh --config=<档> 会自动生成）与版本覆盖文件
+/.config.bak-*
+/.config.clobbered-*
+/.config.RESTORED-*
+/.config.old.*
+/version
+
+# 原厂固件转储与个人设备备份：体积大（数 GB）且含设备身份数据，绝不入库
+/原厂备份/
+
+# 与固件无关的本机运维脚本
+/clone-sda/
