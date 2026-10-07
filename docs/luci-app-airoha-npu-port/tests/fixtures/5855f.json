@@ -1,0 +1,220 @@
+{
+"getStatus":{
+	"npu_version": "1456.62",
+	"npu_loaded": true,
+	"npu_device": "1e900000.npu",
+	"npu_clock": 800000000,
+	"npu_cores": 8,
+	"offload_bound": 0,
+	"offload_total": 0,
+	"memory_regions": [
+		{
+			"name": "atf",
+			"start": "0x0000000080000000",
+			"end": "0x00000000801fffff",
+			"size": "2048 KiB"
+		},
+		{
+			"name": "npu-binary",
+			"start": "0x0000000084000000",
+			"end": "0x00000000849fffff",
+			"size": "10240 KiB"
+		},
+		{
+			"name": "qdma0-buf",
+			"start": "0x0000000087000000",
+			"end": "0x0000000088ffffff",
+			"size": "32768 KiB"
+		},
+		{
+			"name": "qdma1-buf",
+			"start": "0x0000000089000000",
+			"end": "0x0000000089ffffff",
+			"size": "16384 KiB"
+		}
+	],
+	"mem_total_kb": 61440,
+	"mem_ram_kb": 438480,
+	"cpu_cur_freq": 1100000,
+	"cpu_hw_freq": 1100000,
+	"cpu_governor": "ondemand",
+	"cpu_avail_governors": "conservative ondemand userspace powersave performance ",
+	"cpu_min_freq": 500000,
+	"cpu_max_freq": 1200000,
+	"cpu_avail_freqs": "500000 550000 600000 650000 700000 750000 800000 850000 900000 950000 1000000 1050000 1100000 1150000 1200000 ",
+	"cpu_count": 4,
+	"pll_freq_mhz": 900
+}
+,
+"getPpeEntries":{
+	"entries": [
+		
+	]
+}
+,
+"getWifiInfo":{
+	"wifi_present": true,
+	"npu_offload": false,
+	"chip": "mt7915e",
+	"temp_c": 56,
+	"temp_crit_c": 110,
+	"bands": [
+		{
+			"band": 1,
+			"freq_mhz": 5180,
+			"channel": 36,
+			"width_mhz": 80,
+			"up": true,
+			"netdev": "phy1-ap0",
+			"ssid": "ImmortalWrt",
+			"count": 0,
+			"tx_packets": 0,
+			"tx_retries": 0,
+			"tx_failed": 0,
+			"rx_bytes": 0,
+			"tx_bytes": 0,
+			"signal_dbm": null,
+			"busy_pct": 6,
+			"noise_dbm": -92
+		},
+		{
+			"band": 0,
+			"freq_mhz": 2412,
+			"channel": 1,
+			"width_mhz": 20,
+			"up": true,
+			"netdev": "phy0-ap0",
+			"ssid": "ImmortalWrt",
+			"count": 0,
+			"tx_packets": 0,
+			"tx_retries": 0,
+			"tx_failed": 0,
+			"rx_bytes": 0,
+			"tx_bytes": 0,
+			"signal_dbm": null,
+			"busy_pct": 38,
+			"noise_dbm": -90
+		}
+	]
+}
+,
+"getFrameEngine":{
+	"pse_ports": [
+		{
+			"port": 0,
+			"queues": 6,
+			"iq": 0,
+			"oq": 384,
+			"drops": 0
+		},
+		{
+			"port": 1,
+			"queues": 6,
+			"iq": 0,
+			"oq": 384,
+			"drops": 0
+		},
+		{
+			"port": 2,
+			"queues": 32,
+			"iq": 0,
+			"oq": 768,
+			"drops": 0
+		},
+		{
+			"port": 3,
+			"queues": 6,
+			"iq": 0,
+			"oq": 384,
+			"drops": 0
+		},
+		{
+			"port": 4,
+			"queues": 4,
+			"iq": 0,
+			"oq": 128,
+			"drops": 0
+		},
+		{
+			"port": 5,
+			"queues": 6,
+			"iq": 0,
+			"oq": 384,
+			"drops": 0
+		},
+		{
+			"port": 6,
+			"queues": 8,
+			"iq": 0,
+			"oq": 128,
+			"drops": 0
+		},
+		{
+			"port": 7,
+			"queues": 10,
+			"iq": 0,
+			"oq": 896,
+			"drops": 0
+		},
+		{
+			"port": 8,
+			"queues": 4,
+			"iq": 0,
+			"oq": 128,
+			"drops": 0
+		},
+		{
+			"port": 9,
+			"queues": 2,
+			"iq": 0,
+			"oq": 128,
+			"drops": 0
+		},
+		{
+			"port": 10,
+			"queues": 2,
+			"iq": 0,
+			"oq": 128,
+			"drops": 0
+		}
+	],
+	"pse_total": 16384,
+	"pse_reserved": 3840,
+	"pse_free": 12544,
+	"pse_used_lthd": 8856,
+	"devmem_ok": 1,
+	"error": "",
+	"gdm1": {
+		"netdev": "eth0",
+		"present": true,
+		"link": true,
+		"speed": "switch",
+		"tx": 9812,
+		"tx_drop": 0,
+		"rx": 7752,
+		"rx_drop": 0
+	},
+	"gdm2": {
+		"netdev": "pon0",
+		"present": true,
+		"link": false,
+		"speed": "",
+		"tx": 0,
+		"tx_drop": 0,
+		"rx": 0,
+		"rx_drop": 0
+	},
+	"gdm4": {
+		"netdev": "lan1",
+		"present": true,
+		"link": false,
+		"speed": "2.5G",
+		"tx": 0,
+		"tx_drop": 4,
+		"rx": 0,
+		"rx_drop": 0
+	}
+}
+,
+"fetched_at":"2026-10-07 16:32:50","host":"192.168.1.1"
+}
