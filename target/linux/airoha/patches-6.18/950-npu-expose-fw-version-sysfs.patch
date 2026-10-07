@@ -1,0 +1,71 @@
+--- a/include/linux/soc/airoha/airoha_offload.h
++++ b/include/linux/soc/airoha/airoha_offload.h
+@@ -166,6 +166,9 @@
+ struct airoha_npu {
+ #if (IS_BUILTIN(CONFIG_NET_AIROHA_NPU) || IS_MODULE(CONFIG_NET_AIROHA_NPU))
+ 	struct device *dev;
++	/* Running NPU firmware version, exported as a sysfs attribute so
++	 * userspace does not have to scrape it from the boot log. */
++	u32 fw_version;
+ 	struct regmap *regmap;
+ 
+ 	struct airoha_npu_core {
+--- a/drivers/net/ethernet/airoha/airoha_npu.c
++++ b/drivers/net/ethernet/airoha/airoha_npu.c
+@@ -833,15 +833,47 @@
+ 	msleep(100);
+ 
+ 	if (!airoha_npu_wlan_msg_get(npu, 0, WLAN_FUNC_GET_WAIT_NPU_VERSION,
+-				     &val, sizeof(val), GFP_KERNEL))
++				     &val, sizeof(val), GFP_KERNEL)) {
++		npu->fw_version = val;
+ 		dev_info(dev, "NPU fw version: %0d.%d\n",
+ 			 (val >> 16) & 0xffff, val & 0xffff);
++	}
+ 
+ 	platform_set_drvdata(pdev, npu);
+ 
+ 	return 0;
+ }
+ 
++static ssize_t fw_version_show(struct device *dev,
++			       struct device_attribute *attr, char *buf)
++{
++	struct airoha_npu *npu = dev_get_drvdata(dev);
++	u16 major, minor;
++
++	if (!npu || !npu->fw_version)
++		return sysfs_emit(buf, "unknown\n");
++
++	major = (npu->fw_version >> 16) & 0xffff;
++	minor = npu->fw_version & 0xffff;
++
++	return sysfs_emit(buf, "%u.%u\n", major, minor);
++}
++static DEVICE_ATTR_RO(fw_version);
++
++static ssize_t num_cores_show(struct device *dev,
++			      struct device_attribute *attr, char *buf)
++{
++	return sysfs_emit(buf, "%u\n", NPU_NUM_CORES);
++}
++static DEVICE_ATTR_RO(num_cores);
++
++static struct attribute *airoha_npu_attrs[] = {
++	&dev_attr_fw_version.attr,
++	&dev_attr_num_cores.attr,
++	NULL,
++};
++ATTRIBUTE_GROUPS(airoha_npu);
++
+ static void airoha_npu_remove(struct platform_device *pdev)
+ {
+ 	struct airoha_npu *npu = platform_get_drvdata(pdev);
+@@ -857,6 +889,7 @@
+ 	.driver = {
+ 		.name = "airoha-npu",
+ 		.of_match_table = of_airoha_npu_match,
++		.dev_groups = airoha_npu_groups,
+ 	},
+ };
+ module_platform_driver(airoha_npu_driver);

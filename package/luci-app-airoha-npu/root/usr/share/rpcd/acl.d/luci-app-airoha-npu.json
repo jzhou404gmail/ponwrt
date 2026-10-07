@@ -1,0 +1,35 @@
+{
+	"luci-app-airoha-npu": {
+		"description": "Grant access to Airoha SoC status (NPU + CPU + Frame Engine)",
+		"read": {
+			"ubus": {
+				"luci.airoha_npu": [ "getStatus", "getPpeEntries", "getWifiInfo", "getFrameEngine" ]
+			},
+			"file": {
+				"/sys/kernel/debug/ppe/entries": [ "read" ],
+				"/sys/kernel/debug/ppe/bind": [ "read" ],
+				"/sys/devices/system/cpu/cpufreq/policy0/*": [ "read" ],
+				"/sys/class/net/*/statistics/*": [ "read" ],
+				"/sys/class/net/*/carrier": [ "read" ],
+				"/sys/class/net/*/operstate": [ "read" ],
+				"/sys/class/net/*/of_node": [ "read" ],
+				"/sys/bus/platform/devices/1e900000.npu/*": [ "read" ],
+				"/sys/bus/platform/drivers/airoha-npu/*": [ "read" ],
+				"/sys/class/ieee80211/*/device/driver": [ "read" ],
+			"/sys/class/ieee80211/*/hwmon*/temp1_input": [ "read" ],
+			"/sys/class/ieee80211/*/hwmon*/temp1_crit": [ "read" ],
+			"/sys/kernel/debug/ieee80211/*/mt76/token_info": [ "read" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"luci.airoha_npu": [ "setGovernor", "setMaxFreq", "setOverclock" ]
+			},
+			"file": {
+				"/sys/devices/system/cpu/cpufreq/policy0/scaling_governor": [ "write" ],
+				"/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq": [ "write" ],
+				"/dev/mem": [ "read", "write" ]
+			}
+		}
+	}
+}

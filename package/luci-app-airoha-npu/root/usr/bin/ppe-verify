@@ -1,0 +1,454 @@
+#!/bin/sh
+# PPE Flow Offload Verification Script
+# Simulates network traffic and verifies PPE hardware offload entries in debugfs
+#
+# Usage: /usr/bin/ppe-verify [duration_seconds]
+# Default duration: 30 seconds
+#
+# PonWrt port: the upstream link is the PON port (GDM2, netdev pon0), not the
+# EN8811 2.5G PHY, so the WAN interface is resolved from the device tree the
+# same way the LuCI backend does.
+
+DURATION="${1:-30}"
+PPE_ENTRIES="/sys/kernel/debug/ppe/entries"
+PPE_BIND="/sys/kernel/debug/ppe/bind"
+LAN_IF="br-lan"
+
+# Resolve the WAN netdev: the XPON GEM data path (GDM2 / pon0) first, then the
+# 2.5G PHY (GDM4, named by the board DTS), then any known WAN name.
+gdm_netdev() {
+	local want="$1" dir node parent
+
+	for dir in /sys/class/net/*; do
+		[ -e "$dir/of_node" ] || continue
+		node=$(readlink -f "$dir/of_node" 2>/dev/null) || continue
+		[ -n "$node" ] || continue
+		parent="${node%/*}"
+		case "${node##*/}" in
+			"ethernet@$want")
+				echo "${dir##*/}"; return 0 ;;
+			ethernet-port@*)
+				[ "${parent##*/}" = "ethernet@$want" ] || continue
+				echo "${dir##*/}"; return 0 ;;
+		esac
+	done
+
+	return 1
+}
+
+resolve_wan_if() {
+	local dev
+
+	# The PON data path is tagged in the device tree; prefer it over the index.
+	for dev in /sys/class/net/*; do
+		[ -e "$dev/of_node/airoha,pon-data-path" ] || continue
+		echo "${dev##*/}"
+		return 0
+	done
+
+	dev=$(gdm_netdev 2) && [ -n "$dev" ] && { echo "$dev"; return 0; }
+	dev=$(gdm_netdev 4) && [ -n "$dev" ] && { echo "$dev"; return 0; }
+
+	for dev in pon0 wan lan1 eth1; do
+		[ -d "/sys/class/net/$dev" ] && { echo "$dev"; return 0; }
+	done
+
+	echo "pon0"
+}
+
+WAN_IF="$(resolve_wan_if)"
+
+# Colors (disabled if not a terminal)
+if [ -t 1 ]; then
+    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; NC=''
+fi
+
+log_info()  { printf "${CYAN}[INFO]${NC}  %s\n" "$1"; }
+log_ok()    { printf "${GREEN}[OK]${NC}    %s\n" "$1"; }
+log_warn()  { printf "${YELLOW}[WARN]${NC}  %s\n" "$1"; }
+log_err()   { printf "${RED}[ERR]${NC}   %s\n" "$1"; }
+log_step()  { printf "\n${BLUE}=== %s ===${NC}\n" "$1"; }
+
+# Count PPE entries (lines starting with a 5-digit hex index)
+count_ppe_entries() {
+    [ -f "$PPE_ENTRIES" ] || { echo 0; return; }
+    grep -c '^[0-9a-fA-F]\{5\} ' "$PPE_ENTRIES" 2>/dev/null | head -n 1
+}
+
+count_ppe_bind() {
+    [ -f "$PPE_BIND" ] || { echo 0; return; }
+    grep -c '^[0-9a-fA-F]\{5\} ' "$PPE_BIND" 2>/dev/null | head -n 1
+}
+
+# Show first N PPE entries for inspection
+show_ppe_entries() {
+    local n="${1:-5}"
+    [ -f "$PPE_ENTRIES" ] || return 0
+    grep '^[0-9a-fA-F]\{5\} ' "$PPE_ENTRIES" 2>/dev/null | head -"$n"
+}
+
+# Get interface IP address
+get_if_ip() {
+    ip -4 addr show dev "$1" 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1
+}
+
+# Get default gateway
+get_gw() {
+    ip route show default 2>/dev/null | awk '{print $3; exit}'
+}
+
+# ========================================================================
+# STEP 1: Pre-flight Checks
+# ========================================================================
+preflight_checks() {
+    log_step "STEP 1: Pre-flight Checks"
+
+    if [ ! -d /sys/kernel/debug/ppe ]; then
+        log_err "PPE debugfs directory not found: /sys/kernel/debug/ppe"
+        log_info "Try: mount -t debugfs none /sys/kernel/debug"
+        return 1
+    fi
+    log_ok "PPE debugfs directory exists"
+
+    if [ ! -f "$PPE_ENTRIES" ]; then
+        log_err "PPE entries file not found: $PPE_ENTRIES"
+        return 1
+    fi
+    log_ok "PPE entries file accessible"
+
+    if [ ! -f "$PPE_BIND" ]; then
+        log_warn "PPE bind file not found (bind entries won't be counted)"
+    else
+        log_ok "PPE bind file accessible"
+    fi
+
+    if ! ip link show "$WAN_IF" 2>/dev/null | grep -q "state UP"; then
+        log_warn "WAN interface $WAN_IF is not UP"
+    else
+        log_ok "WAN interface $WAN_IF is UP"
+    fi
+
+    if ! ip link show "$LAN_IF" 2>/dev/null | grep -q "state UP"; then
+        log_warn "LAN interface $LAN_IF is not UP"
+    else
+        log_ok "LAN interface $LAN_IF is UP"
+    fi
+
+    local gw
+    gw=$(get_gw)
+    if [ -z "$gw" ]; then
+        log_warn "No default gateway found"
+    else
+        log_ok "Default gateway: $gw"
+        if ping -c 1 -W 2 "$gw" >/dev/null 2>&1; then
+            log_ok "Gateway reachable"
+        else
+            log_warn "Gateway not reachable"
+        fi
+    fi
+
+    if ping -c 1 -W 3 8.8.8.8 >/dev/null 2>&1; then
+        log_ok "Internet reachable (8.8.8.8)"
+    else
+        log_warn "Internet not reachable (8.8.8.8) - some tests may fail"
+    fi
+
+    return 0
+}
+
+# ========================================================================
+# STEP 2: Verify Kernel Modules
+# ========================================================================
+check_modules() {
+    log_step "STEP 2: Kernel Module Verification"
+
+    local modules="nf_flow_table nf_flow_table_inet nft_flow_offload nft_ct"
+    local mod mod_uc
+
+    for mod in $modules; do
+        if lsmod 2>/dev/null | grep -q "^${mod}"; then
+            log_ok "Module loaded: $mod"
+            continue
+        fi
+        # NOTE: ${var^^} is a bashism and aborts busybox ash, so upper-case
+        # the module name explicitly.
+        mod_uc=$(echo "$mod" | tr 'a-z' 'A-Z')
+        if grep -q "^CONFIG_${mod_uc}=y" /proc/config.gz 2>/dev/null || \
+           grep -q "${mod}" /lib/modules/$(uname -r)/modules.builtin 2>/dev/null; then
+            log_ok "Module built-in: $mod"
+        else
+            log_warn "Module not found: $mod (may be built-in)"
+        fi
+    done
+
+    if lsmod 2>/dev/null | grep -q "airoha"; then
+        log_ok "Airoha driver loaded"
+    else
+        log_info "Airoha driver status (may be built-in):"
+        lsmod 2>/dev/null | grep -i "airoha" || echo "  (not in lsmod, likely built-in)"
+    fi
+}
+
+# ========================================================================
+# STEP 3: Verify nftables Rules
+# ========================================================================
+check_nft_rules() {
+    log_step "STEP 3: nftables Rule Verification"
+
+    if ! command -v nft >/dev/null 2>&1; then
+        log_warn "nft command not available, skipping nft rule check"
+        return 1
+    fi
+
+    local ruleset
+    ruleset=$(nft list ruleset 2>/dev/null)
+
+    if [ -z "$ruleset" ]; then
+        log_err "nft ruleset is empty - PPE flow offload rules not configured"
+        return 1
+    fi
+
+    if echo "$ruleset" | grep -q "flowtable"; then
+        log_ok "Flowtable found in nft ruleset"
+        echo "$ruleset" | grep -A5 "flowtable" | sed 's/^/    /'
+    else
+        log_err "No flowtable found in nft ruleset"
+        return 1
+    fi
+
+    if echo "$ruleset" | grep -q "flow offload"; then
+        log_ok "Flow offload rule found"
+    else
+        log_warn "No 'flow offload' rule found"
+    fi
+
+    if echo "$ruleset" | grep -A10 "flowtable" | grep -q "devices"; then
+        log_ok "Flowtable has device binding"
+    else
+        log_warn "Flowtable missing device binding - hardware offload may not work"
+    fi
+
+    return 0
+}
+
+# ========================================================================
+# STEP 4: Verify tc Configuration
+# ========================================================================
+check_tc_config() {
+    log_step "STEP 4: TC Configuration Check"
+
+    if ! command -v tc >/dev/null 2>&1; then
+        log_warn "tc command not available, skipping"
+        return 0
+    fi
+
+    local wan_tc hw_filters
+    wan_tc=$(tc qdisc show dev "$WAN_IF" 2>/dev/null)
+    if echo "$wan_tc" | grep -q "clsact"; then
+        log_ok "clsact qdisc on $WAN_IF"
+    else
+        log_info "No clsact qdisc on $WAN_IF (normal if using nft path)"
+    fi
+
+    hw_filters=$(tc filter show dev "$WAN_IF" ingress 2>/dev/null | grep -c "skip_sw")
+    if [ "${hw_filters:-0}" -gt 0 ]; then
+        log_ok "Found $hw_filters hardware offload filter(s) on $WAN_IF"
+    else
+        log_info "No hardware offload tc filters (normal if using nft path)"
+    fi
+}
+
+# ========================================================================
+# STEP 5: Capture Baseline
+# ========================================================================
+capture_baseline() {
+    log_step "STEP 5: Capture Baseline (Before Traffic)"
+
+    BASELINE_ENTRIES=$(count_ppe_entries)
+    BASELINE_BIND=$(count_ppe_bind)
+
+    log_info "Baseline PPE entries: $BASELINE_ENTRIES"
+    log_info "Baseline PPE bind:    $BASELINE_BIND"
+
+    if [ "$BASELINE_ENTRIES" -gt 0 ]; then
+        log_warn "Entries already exist before traffic generation"
+        log_info "Existing entries (first 5):"
+        show_ppe_entries 5 | sed 's/^/    /'
+    else
+        log_ok "No existing PPE entries (clean baseline)"
+    fi
+}
+
+# ========================================================================
+# STEP 6: Generate Traffic
+# ========================================================================
+generate_traffic() {
+    log_step "STEP 6: Generate Network Traffic (${DURATION}s)"
+
+    local gw wan_ip lan_ip
+    gw=$(get_gw)
+    wan_ip=$(get_if_ip "$WAN_IF")
+    lan_ip=$(get_if_ip "$LAN_IF")
+
+    log_info "WAN ($WAN_IF) IP: ${wan_ip:-N/A}, LAN IP: ${lan_ip:-N/A}, GW: ${gw:-N/A}"
+
+    log_info "[1/4] Generating ICMP traffic (ping flood)..."
+    if [ -n "$gw" ]; then
+        ping -c 5 -i 0.1 "$gw" >/dev/null 2>&1 &
+        ping -c 5 -i 0.1 8.8.8.8 >/dev/null 2>&1 &
+    fi
+
+    log_info "[2/4] Generating TCP traffic (curl downloads)..."
+    if command -v curl >/dev/null 2>&1; then
+        curl -s -o /dev/null -w "" --connect-timeout 5 "http://example.com" 2>/dev/null &
+        curl -s -o /dev/null -w "" --connect-timeout 5 "http://speedtest.tele2.net/1MB.zip" 2>/dev/null &
+        for i in 1 2 3; do
+            curl -s -o /dev/null -w "" --connect-timeout 5 "http://example.com" 2>/dev/null &
+        done
+    fi
+
+    log_info "[3/4] Generating UDP traffic (DNS queries)..."
+    for domain in google.com youtube.com github.com cloudflare.com \
+                  amazon.com microsoft.com apple.com netflix.com; do
+        nslookup "$domain" >/dev/null 2>&1 &
+    done
+
+    log_info "[4/4] Attempting iperf3 traffic..."
+    if command -v iperf3 >/dev/null 2>&1; then
+        iperf3 -c bouygues.iperf.fr -t 5 -p 5200 >/dev/null 2>&1 &
+        if pgrep -x iperf3 >/dev/null 2>&1; then
+            iperf3 -c 127.0.0.1 -t "$DURATION" >/dev/null 2>&1 &
+        fi
+    fi
+
+    log_info "Waiting ${DURATION}s for traffic to establish and offload..."
+    sleep "$DURATION"
+    sleep 2
+}
+
+# ========================================================================
+# STEP 7: Verify PPE Entries After Traffic
+# ========================================================================
+verify_entries() {
+    log_step "STEP 7: Verify PPE Entries (After Traffic)"
+
+    AFTER_ENTRIES=$(count_ppe_entries)
+    AFTER_BIND=$(count_ppe_bind)
+
+    log_info "After PPE entries: $AFTER_ENTRIES"
+    log_info "After PPE bind:    $AFTER_BIND"
+
+    local delta=$((AFTER_ENTRIES - BASELINE_ENTRIES))
+
+    printf "\n"
+    printf "    +---------+----------+----------+-------+\n"
+    printf "    |  Type   | Baseline |  After   | Delta |\n"
+    printf "    +---------+----------+----------+-------+\n"
+    printf "    | Entries | %8d | %8d | %5d |\n" "$BASELINE_ENTRIES" "$AFTER_ENTRIES" "$delta"
+    printf "    | Bind    | %8d | %8d | %5d |\n" "$BASELINE_BIND" "$AFTER_BIND" "$((AFTER_BIND - BASELINE_BIND))"
+    printf "    +---------+----------+----------+-------+\n"
+
+    if [ "$AFTER_ENTRIES" -gt 0 ]; then
+        log_ok "PPE Flow Offload Entries are ACTIVE!"
+        log_info "Sample entries (first 10):"
+        show_ppe_entries 10 | while IFS= read -r line; do
+            printf "    %s\n" "$line"
+        done
+
+        log_info "Entry type breakdown:"
+        grep '^[0-9a-fA-F]\{5\} ' "$PPE_ENTRIES" 2>/dev/null | \
+            awk '{
+                if ($3 == "IPv4") type="IPv4"
+                else if ($3 == "IPv6") type="IPv6"
+                else if ($3 == "L2B") type="L2B"
+                else type="Other"
+                states[$2]++
+                types[type]++
+            }
+            END {
+                for (t in types) printf "      %s: %d entries\n", t, types[t]
+                for (s in states) printf "      state %s: %d entries\n", s, states[s]
+            }'
+
+        return 0
+    else
+        log_err "PPE Flow Offload Entries are STILL EMPTY after traffic generation"
+        return 1
+    fi
+}
+
+# ========================================================================
+# STEP 8: Diagnose Issues
+# ========================================================================
+diagnose_issues() {
+    log_step "STEP 8: Diagnostics"
+
+    local ct_count ct_max
+    ct_count=$(cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null)
+    ct_max=$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null)
+    log_info "Conntrack: ${ct_count:-?} / ${ct_max:-?} entries"
+
+    if [ "${ct_count:-0}" -eq 0 ]; then
+        log_err "No conntrack entries - connections not being tracked"
+        log_info "Check: lsmod | grep nf_conntrack"
+    fi
+
+    if [ -f /proc/net/nf_flowtable ]; then
+        log_info "Flowtable statistics:"
+        sed 's/^/    /' /proc/net/nf_flowtable 2>/dev/null
+    else
+        log_warn "No /proc/net/nf_flowtable (flowtable may not be active)"
+    fi
+
+    if command -v nft >/dev/null 2>&1; then
+        log_info "nft flowtable details:"
+        nft list flowtables 2>/dev/null | sed 's/^/    /'
+    fi
+
+    log_info "Recent PPE-related kernel messages:"
+    dmesg 2>/dev/null | grep -i "ppe\|flow.offload\|airoha" | tail -10 | sed 's/^/    /'
+
+    log_info "PPE flow path on PonWrt: LAN (lan1..lan4) <-> PON (pon0 / GDM2)"
+
+    printf "\n"
+    log_info "Troubleshooting hints:"
+    printf "    1. Check nft rules: nft list ruleset | grep -A10 flowtable\n"
+    printf "    2. Check kernel modules: lsmod | grep -E 'nft_flow|nf_flow'\n"
+    printf "    3. Verify conntrack: cat /proc/sys/net/netfilter/nf_conntrack_count\n"
+    printf "    4. Check dmesg: dmesg | grep -i ppe\n"
+    printf "    5. Ensure traffic is forwarded (not local): LAN <-> WAN (%s)\n" "$WAN_IF"
+}
+
+# ========================================================================
+# Main
+# ========================================================================
+main() {
+    printf "\n"
+    printf "===========================================\n"
+    printf "  PPE Flow Offload Verification Script\n"
+    printf "  Platform: Airoha AN7581 / PonWrt\n"
+    printf "  WAN port: %s\n" "$WAN_IF"
+    printf "  Duration: %ss\n" "$DURATION"
+    printf "===========================================\n"
+
+    preflight_checks || {
+        log_err "Pre-flight checks failed. Aborting."
+        exit 1
+    }
+
+    check_modules
+    check_nft_rules
+    check_tc_config
+    capture_baseline
+    generate_traffic
+    verify_entries
+    diagnose_issues
+
+    printf "\n===========================================\n"
+    printf "  Verification Complete\n"
+    printf "===========================================\n\n"
+}
+
+main "$@"

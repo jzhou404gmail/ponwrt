@@ -1,0 +1,180 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-airoha-npu\n"
+"POT-Creation-Date: \n"
+"PO-Revision-Date: \n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: zh_Hans\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "Active"
+msgstr "运行中"
+
+msgid "Airoha SoC Status"
+msgstr "Airoha SoC 状态"
+
+msgid "Apply"
+msgstr "应用"
+
+msgid "Applying..."
+msgstr "正在应用…"
+
+msgid "Band %d"
+msgstr "频段 %d"
+
+msgid "CPU Cores"
+msgstr "CPU 核心数"
+
+msgid "CPU Frequency"
+msgstr "CPU 频率"
+
+msgid "CPU set to"
+msgstr "CPU 已设置为"
+
+msgid "Channel"
+msgstr "信道"
+
+msgid "Channel usage"
+msgstr "信道占用"
+
+msgid "Clients"
+msgstr "客户端"
+
+msgid "Copper PHY (LAN)"
+msgstr "铜口 PHY（LAN）"
+
+msgid "Current Frequency"
+msgstr "当前频率"
+
+msgid "Direct PLL. Stock max 1200 MHz. Stable up to 1500 MHz."
+msgstr "直接写 PLL。原厂最高 1200 MHz，1500 MHz 以内一般稳定。"
+
+msgid "Downlink to the clients / uplink from the clients"
+msgstr "下行（发给客户端）/ 上行（客户端发来）"
+
+msgid "Error:"
+msgstr "错误："
+
+msgid "Ethernet"
+msgstr "以太网"
+
+msgid "Failed:"
+msgstr "失败："
+
+msgid "Firmware / Clock / Cores"
+msgstr "固件 / 频率 / 核心"
+
+msgid "Frame Engine"
+msgstr "帧引擎（Frame Engine）"
+
+msgid "Frequencies above 1400 MHz may be unstable. Continue?"
+msgstr "频率超过 1400 MHz 可能不稳定，是否继续？"
+
+msgid "Governor"
+msgstr "调频策略"
+
+msgid "Grant access to Airoha SoC status (NPU + CPU + Frame Engine)"
+msgstr "授予访问 Airoha SoC 状态（NPU + CPU + 帧引擎）的权限"
+
+msgid "Index"
+msgstr "索引"
+
+msgid "LAN Switch (lan2-lan4)"
+msgstr "LAN 交换机（lan2-lan4）"
+
+msgid "Link"
+msgstr "链路"
+
+msgid "Max Frequency"
+msgstr "最高频率"
+
+msgid "Must be 500-1600 MHz"
+msgstr "必须在 500-1600 MHz 之间"
+
+msgid "NPU & Offload Engine"
+msgstr "NPU 与卸载引擎"
+
+msgid "NPU Status"
+msgstr "NPU 状态"
+
+msgid "NPU offload active · WiFi → NPU → WDMA → PPE"
+msgstr "NPU 卸载已启用 · WiFi → NPU → WDMA → PPE"
+
+msgid "New Flow"
+msgstr "新五元组"
+
+msgid "No GDM port resolved a netdev (the RPC returned none for gdm1/gdm2/gdm4)"
+msgstr "未解析到任何 GDM 网口（RPC 未返回 gdm1/gdm2/gdm4 的 netdev）"
+
+msgid "No NPU offload path · WiFi → PCIe → GDM3 (P3) → PPE"
+msgstr "无 NPU 卸载路径 · WiFi → PCIe → GDM3 (P3) → PPE"
+
+msgid "No offloaded flows"
+msgstr "无卸载流表项"
+
+msgid "Noise"
+msgstr "噪声"
+
+msgid "Not Active"
+msgstr "未运行"
+
+msgid "Original Flow"
+msgstr "原始五元组"
+
+msgid "Overclock"
+msgstr "超频"
+
+msgid "PCIe (WiFi)"
+msgstr "PCIe（WiFi）"
+
+msgid "PON (WAN uplink)"
+msgstr "PON（WAN 上行）"
+
+msgid "PPE Flow Offload Entries"
+msgstr "PPE 流卸载表项"
+
+msgid "Reserved Memory"
+msgstr "保留内存"
+
+msgid "Retry rate"
+msgstr "重传率"
+
+msgid "SSID"
+msgstr "SSID"
+
+msgid "Signal (weakest)"
+msgstr "信号（最弱客户端）"
+
+msgid "SoC Status"
+msgstr "SoC 状态"
+
+msgid "State"
+msgstr "状态"
+
+msgid "TX failed"
+msgstr "发送失败"
+
+msgid "Traffic"
+msgstr "流量"
+
+msgid "Type"
+msgstr "类型"
+
+msgid "WiFi"
+msgstr "WiFi"
+
+msgid "WiFi chip temperature"
+msgstr "WiFi 芯片温度"
+
+msgid "WiFi chip temperature (limit %s °C)"
+msgstr "WiFi 芯片温度（上限 %s °C）"
+
+msgid "down"
+msgstr "断开"
+
+msgid "up"
+msgstr "连通"

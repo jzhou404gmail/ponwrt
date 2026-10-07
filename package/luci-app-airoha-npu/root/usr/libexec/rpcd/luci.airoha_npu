@@ -1,0 +1,990 @@
+#!/bin/sh
+
+# Airoha SoC Status RPC backend for LuCI (NPU + CPU + Frame Engine)
+#
+# Register addresses below mirror drivers/net/ethernet/airoha/airoha_regs.h
+# from the kernel built for this target (FE base = 0x1fb50000).
+#
+# GDM MIB counters are READ-TO-CLEAR: the kernel driver reads them and
+# accumulates them into the per-netdev software stats (ndo_get_stats64),
+# so userspace must always consume netdev statistics, never raw MIB
+# registers (a raw read would steal counts from the kernel and show
+# near-zero deltas). PSE / CDM configuration registers are safe to read.
+#
+# ---------------------------------------------------------------------------
+# PonWrt port notes
+# ---------------------------------------------------------------------------
+# Upstream (luci-app-airoha-npu v1.1.4) was written for a board where the
+# WAN was the EN8811 2.5G PHY on GDM4 (netdev "wan") and the PON data path
+# on GDM2 was disabled in the DTS.
+#
+# On PonWrt the roles are inverted: GDM2 carries the XPON GEM data plane
+# (the airoha ethernet driver names it pon%d -> "pon0", and airoha-xpon owns
+# its carrier state) and it is the WAN, while GDM4 is an ordinary copper LAN
+# port named by the board DTS. None of the netdev names are therefore stable
+# across the supported boards, so the GDM -> netdev map is resolved at
+# runtime from the live device tree instead of being hardcoded.
+
+. /lib/functions.sh
+
+FE_BASE=0x1fb50000
+
+# --- PSE registers (offsets from FE_BASE 0x1fb50000, see airoha_regs.h) ---
+REG_FE_PSE_QUEUE_CFG_WR=0x1fb50080    # port_id bits 27:24, queue_id bits 20:16
+REG_FE_PSE_QUEUE_CFG_VAL=0x1fb50084   # OQ_RSV bits 13:0
+PSE_FQ_CFG=0x1fb5008c                  # FQ_LIMIT bits 14:0 (total PSE pages)
+REG_FE_PSE_BUF_SET=0x1fb50090          # ALLRSV bits 14:0, SHARE_USED_LTHD bits 31:16
+REG_PSE_IQ_REV1=0x1fb50108             # IQ reserved, P2 bits 23:16
+REG_PSE_IQ_REV2=0x1fb5010c             # IQ reserved, P5 bits 15:8, P4 bits 7:0
+
+# --- PSE port queue topology (airoha_fe_pse_ports_init(), airoha_eth.c) ---
+# "port:num_queues": 0=CDM1 1=GDM1 2=GDM2 3=GDM3 4=PPE1 5=CDM2
+#                    6=CDM3 7=CDM4 8=PPE2 9=GDM4 10=CDM5
+PSE_PORT_QUEUES="0:6 1:6 2:32 3:6 4:4 5:6 6:8 7:10 8:4 9:2 10:2"
+
+# Read a 32-bit FE register through devmem, return decimal.
+fe_rd() {
+	local v
+	v=$(devmem "$1" 32 2>/dev/null)
+	echo $(( ${v:-0} ))
+}
+
+# ---------------------------------------------------------------------------
+# GDM port -> netdev resolution
+# ---------------------------------------------------------------------------
+# Every airoha netdev carries its device tree node in sysfs (device_add()
+# links dev->of_node as "of_node"). The node is either the GDM itself
+# ("ethernet@N", N = GDM index) or, for a GDM exposing several external
+# SerDes lanes, one of its children ("ethernet-port@M", whose parent is the
+# GDM node). That is the same source /lib/preinit/04_set_netdev_label uses
+# to apply "openwrt,netdev-name", so it always matches the live netdev names.
+gdm_netdev() {
+	local want="$1" dir node parent
+
+	for dir in /sys/class/net/*; do
+		[ -e "$dir/of_node" ] || continue
+		node=$(readlink -f "$dir/of_node" 2>/dev/null) || continue
+		[ -n "$node" ] || continue
+		parent="${node%/*}"
+
+		case "${node##*/}" in
+			"ethernet@$want")
+				echo "${dir##*/}"
+				return 0
+				;;
+			ethernet-port@*)
+				[ "${parent##*/}" = "ethernet@$want" ] || continue
+				echo "${dir##*/}"
+				return 0
+				;;
+		esac
+	done
+
+	return 1
+}
+
+# Helper: 1 when this kernel exposes /sys/class/net/<dev>/of_node at all.
+# While it does, the GDM map above is authoritative and guessing by netdev
+# name must NOT be used: on boards where a GDM is disabled (GDM4 on the
+# FiberHome HG5585F-CU) a DSA switch port named lan1..lan4 would otherwise be
+# mistaken for that GDM and its counters shown under the wrong card.
+of_node_available() {
+	local d
+
+	for d in /sys/class/net/*; do
+		[ -e "$d/of_node" ] && return 0
+	done
+
+	return 1
+}
+
+# Helper: link speed label of a GDM netdev, taken from the device tree
+# phy-mode. GDM4 is an EN8811 2.5G PHY on the Nokia / ZNXT boards but a
+# RTL8261N 10G PHY on the Gemtek XG2010G, so this cannot be hardcoded.
+gdm_speed() {
+	local node mode
+
+	[ -n "$1" ] || return 1
+	node=$(readlink -f "/sys/class/net/$1/of_node" 2>/dev/null)
+	[ -n "$node" ] || return 1
+	[ -f "$node/phy-mode" ] || return 1
+
+	mode=$(cat "$node/phy-mode" 2>/dev/null)
+	case "$mode" in
+		2500base-x|2500basex) echo "2.5G" ;;
+		1000base-x|sgmii|gmii) echo "1G" ;;
+		10gbase-r|usxgmii|xfi|10gbase-kr) echo "10G" ;;
+		internal) echo "switch" ;;
+		"") return 1 ;;
+		*) echo "$mode" ;;
+	esac
+}
+
+# Helper: find a netdev by trying known names (fallback for kernels without
+# the of_node link - see of_node_available()).
+find_gdm_dev() {
+	local d
+	for d in "$@"; do
+		[ -n "$d" ] || continue
+		if [ -d "/sys/class/net/$d" ]; then
+			echo "$d"
+			return 0
+		fi
+	done
+	echo ""
+	return 1
+}
+
+# Helper: read netdev statistics from sysfs (avoids hardware MIB clear race)
+# Args: $1=netdev name, $2=stat field (tx_packets/rx_packets/tx_dropped/rx_dropped)
+read_netdev_stat() {
+	local dev="$1"
+	local stat="$2"
+	local val=""
+	if [ -r "/sys/class/net/$dev/statistics/$stat" ]; then
+		val=$(cat "/sys/class/net/$dev/statistics/$stat" 2>/dev/null)
+	fi
+	echo "${val:-0}"
+}
+
+# Helper: 1 when the netdev reports a live link, 0 otherwise.
+# "carrier" is only readable while the interface is running, so fall back to
+# "operstate". For pon0 the carrier is driven by airoha-xpon (ONU
+# registration / service GEM state), so this is the real PON line state.
+netdev_link() {
+	local dev="$1" v
+
+	v=$(cat "/sys/class/net/$dev/carrier" 2>/dev/null)
+	case "$v" in
+		1) echo 1; return ;;
+		0) echo 0; return ;;
+	esac
+
+	v=$(cat "/sys/class/net/$dev/operstate" 2>/dev/null)
+	[ "$v" = "up" ] && echo 1 || echo 0
+}
+
+# Helper: emit the JSON object of one GDM card.
+gdm_json() {
+	local dev="$1"
+	local tx=0 rx=0 txd=0 rxd=0 link=0
+	local present=false linked=false speed=""
+
+	if [ -n "$dev" ]; then
+		tx=$(read_netdev_stat "$dev" tx_packets)
+		rx=$(read_netdev_stat "$dev" rx_packets)
+		txd=$(read_netdev_stat "$dev" tx_dropped)
+		rxd=$(read_netdev_stat "$dev" rx_dropped)
+		link=$(netdev_link "$dev")
+		speed=$(gdm_speed "$dev")
+		present=true
+	fi
+	[ "$link" = 1 ] && linked=true
+
+	printf '{"netdev":"%s","present":%s,"link":%s,"speed":"%s","tx":%d,"tx_drop":%d,"rx":%d,"rx_drop":%d}' \
+		"$dev" "$present" "$linked" "${speed:-}" \
+		"${tx:-0}" "${txd:-0}" "${rx:-0}" "${rxd:-0}"
+}
+
+get_status() {
+	# === NPU Status ===
+	# Read the actually-loaded NPU firmware path from DTS (firmware-name property).
+	local npu_fw=""
+	local npu_dt="/proc/device-tree/soc/npu@1e900000/firmware-name"
+	if [ -f "$npu_dt" ]; then
+		# firmware-name is a string list (null-separated). First entry is the rv32 code.
+		local fw_rel=$(tr '\0' '\n' < "$npu_dt" 2>/dev/null | grep -m1 "rv32")
+		[ -n "$fw_rel" ] && npu_fw="/lib/firmware/$fw_rel"
+	fi
+	# Fallback: use default EN7581 NPU firmware path if DTS has no firmware-name
+	if [ -z "$npu_fw" ] && [ -f "/lib/firmware/airoha/en7581_npu_rv32.bin" ]; then
+		npu_fw="/lib/firmware/airoha/en7581_npu_rv32.bin"
+	fi
+
+	# NPU firmware version: the driver reads it via a mailbox message from the
+	# running NPU firmware, not from a static string inside the firmware file.
+	# Prefer the fw_version sysfs attribute when the kernel exposes it; on
+	# PonWrt (stock airoha-npu) it is not present, so fall back to the
+	# "NPU fw version: %d.%d" line the driver logs during probe.
+	local npu_ver="Unknown"
+	local npu_sysfs=""
+	for sf in /sys/bus/platform/devices/1e900000.npu/fw_version \
+	          /sys/bus/platform/drivers/airoha-npu/1e900000.npu/fw_version; do
+		if [ -f "$sf" ]; then
+			npu_sysfs=$(cat "$sf" 2>/dev/null)
+			break
+		fi
+	done
+
+	if [ -n "$npu_sysfs" ] && [ "$npu_sysfs" != "unknown" ] && [ "$npu_sysfs" != "Unknown" ]; then
+		npu_ver="$npu_sysfs"
+	fi
+
+	if [ -z "$npu_ver" ] || [ "$npu_ver" = "Unknown" ] || [ "$npu_ver" = "unknown" ]; then
+		local dmesg_ver=$(dmesg 2>/dev/null | grep -oE "NPU fw version:[[:space:]]*[0-9]+\.[0-9]+" | head -1 | awk -F: '{print $2}' | tr -d ' ')
+		[ -n "$dmesg_ver" ] && npu_ver="$dmesg_ver"
+	fi
+
+	if [ -z "$npu_ver" ] || [ "$npu_ver" = "Unknown" ] || [ "$npu_ver" = "unknown" ]; then
+		if [ -n "$npu_fw" ] && [ -f "$npu_fw" ]; then
+			npu_ver=$(strings "$npu_fw" 2>/dev/null | grep -oE '([0-9]+\.[0-9]+\.[0-9]+-)?TLB[0-9.]+[-_v0-9]*' | head -1)
+			[ -z "$npu_ver" ] && npu_ver="Unknown"
+		fi
+	fi
+
+	local npu_loaded="false"
+	local npu_device=""
+	local npu_driver_path="/sys/bus/platform/drivers/airoha-npu"
+
+	if [ -d "$npu_driver_path" ]; then
+		npu_device=$(ls -1 "$npu_driver_path" 2>/dev/null | grep '\.npu$' | head -1)
+		if [ -n "$npu_device" ]; then
+			npu_loaded="true"
+		fi
+	fi
+
+	# NPU clock: prefer debugfs clk_rate. If not exposed, fall back to
+	# known stock frequency (800 MHz for EN7581/AN7581) or attempt a
+	# devmem register read of the NPU PLL.
+	local npu_clock=0
+	if [ -f "/sys/kernel/debug/clk/npu/clk_rate" ]; then
+		npu_clock=$(cat /sys/kernel/debug/clk/npu/clk_rate 2>/dev/null || echo 0)
+	fi
+	if [ "$npu_clock" = "0" ] && command -v devmem > /dev/null 2>&1; then
+		local pcw_raw=$(devmem 0x1fa202c4 2>/dev/null)
+		local chg_raw=$(devmem 0x1fa202c8 2>/dev/null)
+		if [ -n "$pcw_raw" ] && [ -n "$chg_raw" ]; then
+			pcw_raw=$((pcw_raw))
+			chg_raw=$((chg_raw))
+			local pcw_int=$(( (pcw_raw >> 24) & 0x7F ))
+			local pll_posdiv=$(( (chg_raw >> 4) & 7 ))
+			if [ "$pcw_int" -gt 0 ]; then
+				if [ "$pll_posdiv" -eq 0 ]; then
+					npu_clock=$((pcw_int * 50))
+				else
+					npu_clock=$((pcw_int * 50 / (1 << pll_posdiv)))
+				fi
+				if [ "$npu_clock" -gt 0 ] && [ "$npu_clock" -lt 4000 ]; then
+					npu_clock=$((npu_clock * 1000000))
+				fi
+			fi
+		fi
+	fi
+	# Last-resort: EN7581 NPU is factory-clocked at 800 MHz
+	if [ "$npu_clock" = "0" ]; then
+		npu_clock=800000000
+	fi
+
+	# NPU cores: num_cores sysfs when the kernel exposes it, otherwise the
+	# watchdog interrupts in /proc/interrupts, otherwise the AN7581 core count.
+	# NOTE: do not append "|| echo 0" after grep -c - it prints a second "0"
+	# when grep exits 1 (no match), producing "0\n0".
+	local npu_cores=""
+	local ncf="/sys/bus/platform/devices/1e900000.npu/num_cores"
+	if [ -f "$ncf" ]; then
+		npu_cores=$(cat "$ncf" 2>/dev/null | tr -dc '0-9')
+	fi
+	if [ -z "$npu_cores" ]; then
+		npu_cores=$(grep -c "airoha-npu-wdt" /proc/interrupts 2>/dev/null)
+	fi
+	[ -z "$npu_cores" ] && npu_cores=0
+	[ "$npu_cores" = "0" ] && npu_cores=8
+
+	local offload_bound=$(cat /sys/kernel/debug/ppe/bind 2>/dev/null | grep -c "^[0-9a-fA-F]")
+	local offload_total=$(cat /sys/kernel/debug/ppe/entries 2>/dev/null | grep -c "^[0-9a-fA-F]")
+
+	# === Reserved Memory ===
+	# Parse every "OF: reserved mem:" boot line so the page shows ALL
+	# reserved regions, not only the NPU-named ones. These are no-map
+	# non-reusable regions, permanently carved out of Linux RAM.
+	local mem_lines=$(dmesg 2>/dev/null | grep "OF: reserved mem:")
+	local regions="[]" mem_total_kb=0
+
+	if [ -n "$mem_lines" ]; then
+		local parsed=$(printf '%s\n' "$mem_lines" | awk '
+		BEGIN { printf "["; first = 1; total = 0 }
+		{
+			if (first == 0) printf ","
+			first = 0
+			match($0, /0x[0-9a-fA-F]+\.\.0x[0-9a-fA-F]+/)
+			range = substr($0, RSTART, RLENGTH)
+			split(range, a, "\\.\\.")
+			match($0, /\([0-9]+ [KMG]i?B\)/)
+			size = substr($0, RSTART+1, RLENGTH-2)
+			match(size, /[0-9]+/)
+			n = substr(size, RSTART, RLENGTH)
+			u = substr(size, RLENGTH+2, 1)
+			if (u == "M") total += n * 1024
+			else if (u == "G") total += n * 1048576
+			else total += n
+			match($0, /non-reusable [^ ]+/)
+			name = substr($0, RSTART+13)
+			gsub(/@.*/, "", name)
+			printf "{\"name\":\"%s\",\"start\":\"%s\",\"end\":\"%s\",\"size\":\"%s\"}", name, a[1], a[2], size
+		}
+		END { printf "]\n%d", total }
+		')
+		regions=$(printf '%s' "$parsed" | head -n 1)
+		mem_total_kb=$(printf '%s' "$parsed" | tail -n 1)
+	fi
+
+	local mem_ram_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+
+	# === CPU Frequency Status ===
+	local cpufreq_path="/sys/devices/system/cpu/cpufreq/policy0"
+	local cpu_cur_freq=0
+	local cpu_hw_freq=0
+	local cpu_governor="unknown"
+	local cpu_avail_governors=""
+	local cpu_min_freq=0
+	local cpu_max_freq=0
+	local cpu_avail_freqs=""
+
+	if [ -d "$cpufreq_path" ]; then
+		cpu_cur_freq=$(cat "$cpufreq_path/scaling_cur_freq" 2>/dev/null || echo 0)
+		cpu_hw_freq=$(cat "$cpufreq_path/cpuinfo_cur_freq" 2>/dev/null || echo 0)
+		cpu_governor=$(cat "$cpufreq_path/scaling_governor" 2>/dev/null || echo "unknown")
+		cpu_avail_governors=$(cat "$cpufreq_path/scaling_available_governors" 2>/dev/null || echo "")
+		cpu_min_freq=$(cat "$cpufreq_path/scaling_min_freq" 2>/dev/null || echo 0)
+		cpu_max_freq=$(cat "$cpufreq_path/scaling_max_freq" 2>/dev/null || echo 0)
+		cpu_avail_freqs=$(cat "$cpufreq_path/scaling_available_frequencies" 2>/dev/null || echo "")
+	fi
+
+	# Read actual PLL frequency from hardware (detects overclock)
+	local pll_freq=0
+	if command -v devmem > /dev/null 2>&1; then
+		local pcw_raw=$(devmem 0x1fa202b4 2>/dev/null)
+		local chg_raw=$(devmem 0x1fa202b8 2>/dev/null)
+		if [ -n "$pcw_raw" ] && [ -n "$chg_raw" ]; then
+			pcw_raw=$((pcw_raw))
+			chg_raw=$((chg_raw))
+			local pcw_int=$(( (pcw_raw >> 24) & 0x7F ))
+			local pll_posdiv=$(( (chg_raw >> 4) & 7 ))
+			if [ "$pll_posdiv" -eq 0 ]; then
+				pll_freq=$((pcw_int * 50))
+			else
+				pll_freq=$((pcw_int * 50 / (1 << pll_posdiv)))
+			fi
+		fi
+	fi
+
+	# Count online CPUs
+	local cpu_count=0
+	if [ -d "/sys/devices/system/cpu" ]; then
+		cpu_count=$(ls -d /sys/devices/system/cpu/cpu[0-9]* 2>/dev/null | wc -l)
+	fi
+
+	printf '{"npu_version":"%s","npu_loaded":%s,"npu_device":"%s","npu_clock":%d,"npu_cores":%d,"offload_bound":%d,"offload_total":%d,"memory_regions":%s,"mem_total_kb":%d,"mem_ram_kb":%d,"cpu_cur_freq":%d,"cpu_hw_freq":%d,"cpu_governor":"%s","cpu_avail_governors":"%s","cpu_min_freq":%d,"cpu_max_freq":%d,"cpu_avail_freqs":"%s","cpu_count":%d,"pll_freq_mhz":%d}' \
+		"${npu_ver:-Unknown}" "$npu_loaded" "${npu_device:-}" "${npu_clock:-0}" "${npu_cores:-0}" "${offload_bound:-0}" "${offload_total:-0}" "$regions" \
+		"${mem_total_kb:-0}" "${mem_ram_kb:-0}" \
+		"${cpu_cur_freq:-0}" "${cpu_hw_freq:-0}" "${cpu_governor:-unknown}" "${cpu_avail_governors:-}" "${cpu_min_freq:-0}" "${cpu_max_freq:-0}" "${cpu_avail_freqs:-}" "${cpu_count:-0}" "${pll_freq:-0}"
+}
+
+get_ppe_entries() {
+	local entries_file="/sys/kernel/debug/ppe/entries"
+
+	if [ ! -f "$entries_file" ]; then
+		echo '{"entries":[]}'
+		return
+	fi
+
+	awk '
+	BEGIN {
+		printf "{\"entries\":["
+		first = 1
+	}
+	/^[0-9a-fA-F]+ / {
+		if (first == 0) printf ","
+		first = 0
+
+		index_val = $1
+		state = $2
+
+		type = ""
+		subtype = ""
+		if ($3 == "IPv4" || $3 == "IPv6") {
+			type = $3
+			subtype = $4
+		} else if ($3 == "L2B" || $4 == "L2B") {
+			type = "L2B"
+			subtype = ""
+		} else {
+			type = $3
+			subtype = $4
+		}
+
+		orig = ""
+		match($0, /orig=[^ ]+/)
+		if (RSTART > 0) {
+			orig = substr($0, RSTART+5, RLENGTH-5)
+		}
+
+		new_flow = ""
+		match($0, /new=[^ ]+/)
+		if (RSTART > 0) {
+			new_flow = substr($0, RSTART+4, RLENGTH-4)
+		}
+
+		eth = ""
+		match($0, /eth=[^ ]+/)
+		if (RSTART > 0) {
+			eth = substr($0, RSTART+4, RLENGTH-4)
+		}
+
+		printf "{\"index\":\"%s\",\"state\":\"%s\",\"type\":\"%s %s\",\"orig\":\"%s\",\"new_flow\":\"%s\",\"eth\":\"%s\"}", \
+			index_val, state, type, subtype, orig, new_flow, eth
+	}
+	END {
+		printf "]}"
+	}
+	' "$entries_file" 2>/dev/null || echo '{"entries":[]}'
+}
+
+# Centre frequency (MHz) to the band index the view uses: 0 = 2.4 GHz,
+# 1 = 5 GHz, 2 = 6 GHz. -1 when unknown.
+freq_to_band() {
+	case "$1" in
+		''|*[!0-9]*) echo -1 ;;
+		*)
+			if [ "$1" -lt 3000 ]; then echo 0
+			elif [ "$1" -lt 5925 ]; then echo 1
+			else echo 2
+			fi
+			;;
+	esac
+}
+
+# Channel-utilisation sampling state. mac80211 reports the survey counters as
+# totals accumulated since the interface came up, so the raw busy/active ratio
+# is a lifetime average; the previous sample is kept in /tmp so that the view
+# can report what the channel is doing *now*. The file is rewritten on every
+# call and is a handful of bytes per radio.
+SURVEY_STATE="/tmp/.airoha_npu_survey"
+
+# ---------------------------------------------------------------- WiFi -----
+# Everything here is derived from data the MT7916D really exposes on this
+# kernel: iw (channel, SSID, per-station counters, channel survey) plus the
+# per-phy hwmon sensor. Nothing is inferred, and a value that cannot be read
+# is emitted as null so that the view can leave the row out instead of
+# printing a zero that looks like a measurement.
+get_wifi_info() {
+	local present=false npu_offload=false chip="" temp_c=null temp_crit_c=null
+	local bands="[]"
+	local h c t mc=""
+
+	# The NPU WiFi offload exists only where mt7996/npu.c runs (MT7996 /
+	# MT7992) - that driver is what creates the token pool debugfs file. The
+	# MT7916D on the FiberHome HG5585F has no NPU offload path at all, and
+	# the view says so instead of showing a badge that means nothing there.
+	[ -f /sys/kernel/debug/ieee80211/phy0/mt76/token_info ] && npu_offload=true
+
+	# Chip identity from the bound driver. The two phys of an MT7916D sit on
+	# one die and report the same sensor, so the junction temperature is
+	# collected once here rather than repeated on every band card.
+	chip=$(basename "$(readlink /sys/class/ieee80211/phy0/device/driver 2>/dev/null)" 2>/dev/null)
+	case "$chip" in ''|driver) chip="" ;; esac
+
+	for h in /sys/class/ieee80211/phy*/hwmon*/temp1_input; do
+		[ -f "$h" ] || continue
+		t=$(cat "$h" 2>/dev/null)
+		case "$t" in ''|*[!0-9]*) continue ;; esac
+		if [ -z "$mc" ] || [ "$t" -gt "$mc" ]; then
+			mc=$t
+			c="${h%/*}/temp1_crit"
+			if [ -f "$c" ]; then
+				c=$(cat "$c" 2>/dev/null)
+				case "$c" in
+					''|*[!0-9]*) ;;
+					*) temp_crit_c=$(awk -v v="$c" 'BEGIN { printf "%.0f", v / 1000 }') ;;
+				esac
+			fi
+		fi
+	done
+	[ -n "$mc" ] && temp_c=$(awk -v v="$mc" 'BEGIN { printf "%.1f", v / 1000 }')
+
+	if ! command -v iw > /dev/null 2>&1; then
+		printf '{"wifi_present":false,"npu_offload":%s,"chip":"%s","temp_c":%s,"temp_crit_c":%s,"bands":[]}' \
+			"$npu_offload" "$chip" "$temp_c" "$temp_crit_c"
+		return
+	fi
+
+	# Field layout of the per-interface file consumed below:
+	#   band|freq|channel|width|up|stations|tx_packets|tx_retries|tx_failed|
+	#   rx_bytes|tx_bytes|signal|busy_pct|noise|netdev|ssid
+	local tmp state_new
+	tmp=$(mktemp 2>/dev/null) || tmp="/tmp/.airoha_npu_wifi.$$"
+	state_new="${SURVEY_STATE}.$$"
+	: > "$tmp"
+	: > "$state_new"
+
+	local iface info freq band ch width ssid up prev
+	local agg sv n tp tr tf rxb txb sig noise active busy busy_pct
+	for iface in $(iw dev 2>/dev/null | awk '/Interface/{print $2}'); do
+		info=$(iw dev "$iface" info 2>/dev/null)
+		# The band always comes from the runtime centre frequency, never from
+		# the netdev name: this board exposes phy0-ap0 / phy1-ap0, other
+		# layouts use phy0.<band>-apN.
+		freq=$(printf '%s\n' "$info" | sed -n 's/.*(\([0-9]\+\) MHz).*/\1/p' | head -n 1)
+		[ -n "$freq" ] || continue
+		band=$(freq_to_band "$freq")
+		[ "$band" -ge 0 ] || continue
+
+		ch=$(printf '%s\n' "$info" | sed -n 's/.*channel \([0-9]\+\).*/\1/p' | head -n 1)
+		width=$(printf '%s\n' "$info" | sed -n 's/.*width: \([0-9]\+\) MHz.*/\1/p' | head -n 1)
+		# An SSID can contain anything, including the separator this function
+		# uses internally, so it is reduced to plain text.
+		ssid=$(printf '%s\n' "$info" | sed -n 's/^[[:space:]]*ssid \(.*\)$/\1/p' | head -n 1 | tr -d '"\\|')
+
+		up=false
+		[ "$(cat "/sys/class/net/$iface/operstate" 2>/dev/null)" = "up" ] && up=true
+
+		# Station aggregate. The byte counters here are the real client
+		# traffic: unlike the netdev statistics they exclude beacons and
+		# management frames, so an idle band reports nothing at all.
+		agg=$(iw dev "$iface" station dump 2>/dev/null | awk '
+			BEGIN { n = 0; tp = 0; tr = 0; tf = 0; rb = 0; tb = 0; sg = "" }
+			/^Station/ { n++ }
+			/^[ \t]*rx bytes:/ { rb += $3 }
+			/^[ \t]*tx bytes:/ { tb += $3 }
+			/^[ \t]*tx packets:/ { tp += $3 }
+			/^[ \t]*tx retries:/ { tr += $3 }
+			/^[ \t]*tx failed:/ { tf += $3 }
+			/^[ \t]*signal:/ { s = $2 + 0; if (sg == "" || s < sg) sg = s }
+			END { printf "%d|%d|%d|%d|%d|%d|%s", n, tp, tr, tf, rb, tb, sg }')
+		IFS='|' read -r n tp tr tf rxb txb sig <<EOF
+$agg
+EOF
+
+		# Channel survey of the channel actually in use (noise floor and the
+		# active/busy airtime counters).
+		sv=$(iw dev "$iface" survey dump 2>/dev/null | awk '
+			function flush() { if (use && active ~ /^[0-9]+$/) printf "%s|%s|%s\n", noise, active, busy }
+			/^Survey data from/ { flush(); use = 0; noise = ""; active = ""; busy = ""; next }
+			/frequency:/ { if ($0 ~ /\[in use\]/) use = 1 }
+			/noise:/ { noise = $2 }
+			/channel active time:/ { active = $4 }
+			/channel busy time:/ { busy = $4 }
+			END { flush() }')
+		noise=""; active=""; busy=""
+		if [ -n "$sv" ]; then
+			IFS='|' read -r noise active busy <<EOF
+$sv
+EOF
+		fi
+
+		busy_pct=""
+		if [ -n "$active" ] && [ "$active" -gt 0 ] 2>/dev/null; then
+			prev=""
+			if [ -f "$SURVEY_STATE" ]; then
+				prev=$(awk -v i="$iface" '$1 == i { printf "%s %s", $2, $3 }' "$SURVEY_STATE" 2>/dev/null)
+			fi
+			# Prefer the delta against the previous sample; anything shorter
+			# than a second is too small to say much, so the lifetime average
+			# is reported instead rather than a wild 0 % or 100 %.
+			busy_pct=$(awk -v a="$active" -v b="$busy" -v p="$prev" 'BEGIN {
+				if (p != "") { split(p, q, " "); da = a - q[1]; db = b - q[2] }
+				if (da >= 1000) v = db / da * 100
+				else v = b / a * 100
+				if (v < 0) v = 0
+				if (v > 100) v = 100
+				printf "%.0f", v
+			}')
+			printf '%s %s %s\n' "$iface" "$active" "$busy" >> "$state_new"
+		fi
+
+		printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+			"$band" "$freq" "${ch:-0}" "${width:-0}" "$up" \
+			"${n:-0}" "${tp:-0}" "${tr:-0}" "${tf:-0}" "${rxb:-0}" "${txb:-0}" \
+			"${sig:-}" "${busy_pct:-}" "${noise:-}" "$iface" "${ssid:-}" >> "$tmp"
+	done
+
+	if [ -s "$tmp" ]; then
+		mv -f "$state_new" "$SURVEY_STATE" 2>/dev/null || rm -f "$state_new"
+	else
+		# Nothing was sampled: leave no empty state file behind on boards
+		# without wireless, and drop a stale one.
+		rm -f "$state_new" "$SURVEY_STATE"
+	fi
+
+	if [ -s "$tmp" ]; then
+		present=true
+		# One entry per band: a second AP interface on the same band (multi
+		# SSID) is folded into the same card, because repeating the band once
+		# per interface would show the same radio twice.
+		bands=$(awk -F'|' '
+			BEGIN { printf "["; f = 1 }
+			{
+				b = $1
+				if (!(b in seen)) {
+					seen[b] = 1
+					order[nb++] = b
+					netdev[b] = $15; freq[b] = $2; ch[b] = $3; wid[b] = $4; up[b] = $5
+					busy[b] = $13; noise[b] = $14; ssid[b] = $16
+				} else {
+					if ($5 == "true") up[b] = "true"
+					if ($16 != "") {
+						if (ssid[b] == "") ssid[b] = $16
+						else if (index(ssid[b], $16) == 0) ssid[b] = ssid[b] ", " $16
+					}
+					if (busy[b] == "") {
+						busy[b] = $13; noise[b] = $14; ch[b] = $3
+						wid[b] = $4; netdev[b] = $15
+					}
+				}
+				cnt[b] += $6; tp[b] += $7; tr[b] += $8; tf[b] += $9
+				rxb[b] += $10; txb[b] += $11
+				if ($12 != "") { if (sig[b] == "" || $12 + 0 < sig[b] + 0) sig[b] = $12 }
+			}
+			END {
+				for (i = 0; i < nb; i++) {
+					b = order[i]
+					if (!f) printf ","
+					f = 0
+					printf "{\"band\":%d,\"freq_mhz\":%d,\"channel\":%d,\"width_mhz\":%d,\"up\":%s,", \
+						b, freq[b], ch[b], wid[b], up[b]
+					printf "\"netdev\":\"%s\",\"ssid\":\"%s\",\"count\":%d,", netdev[b], ssid[b], cnt[b]
+					printf "\"tx_packets\":%d,\"tx_retries\":%d,\"tx_failed\":%d,\"rx_bytes\":%d,\"tx_bytes\":%d,", \
+						tp[b], tr[b], tf[b], rxb[b], txb[b]
+					printf "\"signal_dbm\":%s,\"busy_pct\":%s,\"noise_dbm\":%s}", \
+						(sig[b] == "" ? "null" : sig[b]), \
+						(busy[b] == "" ? "null" : busy[b]), \
+						(noise[b] == "" ? "null" : noise[b])
+				}
+				printf "]"
+			}' "$tmp")
+	fi
+
+	rm -f "$tmp"
+	printf '{"wifi_present":%s,"npu_offload":%s,"chip":"%s","temp_c":%s,"temp_crit_c":%s,"bands":%s}' \
+		"$present" "$npu_offload" "$chip" "$temp_c" "$temp_crit_c" "$bands"
+}
+
+set_governor() {
+	local governor
+	governor=$(echo "$1" | jsonfilter -e "@.governor" 2>/dev/null)
+
+	if [ -z "$governor" ]; then
+		echo '{"error":"missing governor parameter"}'
+		return
+	fi
+
+	# Validate governor is available
+	local avail=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_available_governors 2>/dev/null)
+	if ! echo "$avail" | grep -qw "$governor"; then
+		printf '{"error":"invalid governor: %s"}' "$governor"
+		return
+	fi
+
+	echo "$governor" > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null
+	if [ $? -eq 0 ]; then
+		printf '{"result":"ok","governor":"%s"}' "$governor"
+	else
+		echo '{"error":"failed to set governor"}'
+	fi
+}
+
+set_max_freq() {
+	local freq
+	freq=$(echo "$1" | jsonfilter -e "@.freq" 2>/dev/null)
+
+	if [ -z "$freq" ]; then
+		echo '{"error":"missing freq parameter"}'
+		return
+	fi
+
+	# Validate freq is in available list
+	local avail=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies 2>/dev/null)
+	if ! echo "$avail" | grep -qw "$freq"; then
+		printf '{"error":"invalid frequency: %s"}' "$freq"
+		return
+	fi
+
+	echo "$freq" > /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq 2>/dev/null
+	if [ $? -eq 0 ]; then
+		printf '{"result":"ok","freq":%d}' "$freq"
+	else
+		echo '{"error":"failed to set maximum frequency"}'
+	fi
+}
+
+# Wait for the CPU PLL to lock (~20 ms).
+# This busybox has no fractional sleep support ("sleep: invalid number
+# '0.02'"), so use a real sleep where it works and fall back to a calibrated
+# busy wait (measured ~16 us per iteration on AN7581, so 3000 iterations is
+# roughly 50 ms - overshooting is harmless here, undershooting is not).
+pll_settle() {
+	local i=0
+
+	sleep 0.02 2>/dev/null && return
+
+	while [ "$i" -lt 3000 ]; do
+		i=$((i + 1))
+	done
+}
+
+set_overclock() {
+	local target_mhz
+	target_mhz=$(echo "$1" | jsonfilter -e "@.freq_mhz" 2>/dev/null)
+
+	if [ -z "$target_mhz" ]; then
+		echo '{"error":"missing freq_mhz parameter"}'
+		return
+	fi
+
+	# Validate range (500-1600, crash likely above 1500 at stock voltage)
+	if [ "$target_mhz" -lt 500 ] || [ "$target_mhz" -gt 1600 ]; then
+		echo '{"error":"frequency must be 500-1600 MHz"}'
+		return
+	fi
+
+	if ! command -v devmem > /dev/null 2>&1 || [ ! -e /dev/mem ]; then
+		echo '{"error":"devmem / /dev/mem not available"}'
+		return
+	fi
+
+	# Calculate PCW and posdiv
+	local posdiv pcw_int
+	if [ "$target_mhz" -lt 1000 ]; then
+		posdiv=1
+		pcw_int=$((target_mhz / 25))
+	else
+		posdiv=0
+		pcw_int=$((target_mhz / 50))
+	fi
+
+	# Lock governor to performance to prevent cpufreq from fighting
+	echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null
+
+	# Read current register values
+	local cur_clkmux=$(($(devmem 0x1fa201e0)))
+	local cur_pcw=$(($(devmem 0x1fa202b4)))
+	local cur_chg=$(($(devmem 0x1fa202b8)))
+
+	# Step 1: Enable PLL2 path in CLK_MUX (set bit 2)
+	devmem 0x1fa201e0 32 $(printf "0x%08X" $((cur_clkmux | 0x4)))
+
+	# Step 2: MCUCFG switch to PLL2 (sel=3 in bits[10:9])
+	local cur_u=$(($(devmem 0x1efbe640)))
+	devmem 0x1efbe640 32 $(printf "0x%08X" $(((cur_u & 0xFFFFFFE0) | 0x12)))
+	local cur_s=$(($(devmem 0x1efbe7c0)))
+	devmem 0x1efbe7c0 32 $(printf "0x%08X" $(((cur_s & 0xFFFFF9FF) | (3 << 9))))
+
+	# Step 3: Unlock PLL registers
+	local cur_p=$(($(devmem 0x1fa20268)))
+	devmem 0x1fa20268 32 $(printf "0x%08X" $(((cur_p & 0xFFFFFF00) | 0x12)))
+
+	# Step 4: Write new PCW integer
+	devmem 0x1fa202b4 32 $(printf "0x%08X" $(((cur_pcw & 0x00FFFFFF) | (pcw_int << 24))))
+
+	# Step 5: Write posdiv and toggle CHG bit
+	local chg_bit=$((cur_chg & 1))
+	local cleared=$((cur_chg & 0xFFFFFF8E))
+	if [ "$chg_bit" -eq 1 ]; then
+		devmem 0x1fa202b8 32 $(printf "0x%08X" $((cleared | (posdiv << 4))))
+	else
+		devmem 0x1fa202b8 32 $(printf "0x%08X" $((cleared | (posdiv << 4) | 1)))
+	fi
+
+	# Step 6: Wait for PLL lock
+	pll_settle
+
+	# Step 7: Enable ARMPLL path in CLK_MUX (set bit 0)
+	local cur_clkmux2=$(($(devmem 0x1fa201e0)))
+	devmem 0x1fa201e0 32 $(printf "0x%08X" $((cur_clkmux2 | 0x1)))
+
+	# Step 8: MCUCFG switch back to ARMPLL
+	local cur_u2=$(($(devmem 0x1efbe640)))
+	devmem 0x1efbe640 32 $(printf "0x%08X" $(((cur_u2 & 0xFFFFFFE0) | 0x12)))
+	local cur_s2=$(($(devmem 0x1efbe7c0)))
+	devmem 0x1efbe7c0 32 $(printf "0x%08X" $(((cur_s2 & 0xFFFFF9FF) | (1 << 9))))
+
+	# Step 9: Clear PLL2 path in CLK_MUX
+	local cur_clkmux3=$(($(devmem 0x1fa201e0)))
+	devmem 0x1fa201e0 32 $(printf "0x%08X" $((cur_clkmux3 & 0xFFFFFFFB)))
+
+	# Step 10: Re-lock PLL registers
+	local cur_p2=$(($(devmem 0x1fa20268)))
+	devmem 0x1fa20268 32 $(printf "0x%08X" $((cur_p2 & 0xFFFFFF00)))
+
+	# Verify
+	local final_pcw=$(($(devmem 0x1fa202b4)))
+	local final_chg=$(($(devmem 0x1fa202b8)))
+	local read_pcw=$(( (final_pcw >> 24) & 0x7F ))
+	local read_posdiv=$(( (final_chg >> 4) & 7 ))
+	local read_freq
+	if [ "$read_posdiv" -eq 0 ]; then
+		read_freq=$((read_pcw * 50))
+	else
+		read_freq=$((read_pcw * 50 / (1 << read_posdiv)))
+	fi
+
+	printf '{"result":"ok","target_mhz":%d,"actual_mhz":%d,"pcw":%d,"posdiv":%d}' \
+		"$target_mhz" "$read_freq" "$read_pcw" "$read_posdiv"
+}
+
+get_frame_engine() {
+	# Register-based PSE reads need /dev/mem, which only exists when
+	# CONFIG_DEVMEM=y is set in the kernel config. When it is missing we
+	# keep the netdev-based GDM data working and only mark the PSE part as
+	# unavailable, instead of erroring out.
+	local devmem_ok=0
+	if command -v devmem > /dev/null 2>&1 && [ -e /dev/mem ]; then
+		devmem_ok=1
+	fi
+	local fe_error=""
+	if [ "$devmem_ok" = "0" ]; then
+		if ! command -v devmem > /dev/null 2>&1; then
+			fe_error="devmem applet not found"
+		else
+			fe_error="/dev/mem missing - enable CONFIG_KERNEL_DEVMEM=y in the build config and rebuild"
+		fi
+	fi
+
+	# === GDM port -> netdev map ===
+	# GDM2 carries the XPON GEM data plane (netdev "pon0", the WAN) on every
+	# PonWrt board; GDM1 is the embedded switch master; GDM4 is the board's
+	# copper PHY, which the DTS names lan1 on most boards but exposes as two
+	# ports (lan1/lan5, lan5/lan6) on the usb-sfp variants. Resolve all of
+	# them from the live device tree.
+	local gdm1_dev=$(gdm_netdev 1)
+	local gdm2_dev=$(gdm_netdev 2)
+	local gdm4_dev=$(gdm_netdev 4)
+
+	# Only fall back to guessing by netdev name when this kernel does not
+	# expose of_node at all; see of_node_available() for why guessing is
+	# wrong whenever the device tree is readable.
+	if ! of_node_available; then
+		[ -n "$gdm1_dev" ] || gdm1_dev=$(find_gdm_dev dsa-mgr eth0)
+		[ -n "$gdm2_dev" ] || gdm2_dev=$(find_gdm_dev pon0)
+		[ -n "$gdm4_dev" ] || gdm4_dev=$(find_gdm_dev lan1 wan eth1)
+	fi
+
+	# === PSE shared buffer ===
+	# REG_FE_PSE_BUF_SET (0x1fb50090): ALLRSV = total pages reserved for the
+	# per-port queues (bits 14:0); SHARE_USED_LTHD = low watermark (bits 31:16).
+	# PSE_FQ_CFG (0x1fb5008c): FQ_LIMIT = total pages in the PSE shared buffer
+	# (bits 14:0). Free shared pages = FQ_LIMIT - ALLRSV (same accounting the
+	# kernel driver uses in airoha_fe_set_pse_oq_rsv()).
+	# === PSE per-port queue status ===
+	# Indirect read (same sequence as airoha_fe_get_pse_queue_rsv_pages()):
+	#   1) write port_id (27:24) + queue_id (20:16) to REG_FE_PSE_QUEUE_CFG_WR
+	#   2) read OQ reserved pages (bits 13:0) from REG_FE_PSE_QUEUE_CFG_VAL
+	# Then sum OQ pages over every queue of the port.
+	# IQ reservations only exist on P2 (GDM2), P4 (PPE1) and P5 (CDM2)
+	# (REG_PSE_IQ_REV1/REV2).
+	local psb=0 fq=0 pse_all_rsv=0 pse_fq_limit=0 pse_used_lthd=0 pse_free=0 oq_total=0
+	local iq_rev1=0 iq_rev2=0
+	local pse_ports="" p_q port nq q oq iq drops cfg_val v
+
+	if [ "$devmem_ok" = "1" ]; then
+		psb=$(fe_rd "$REG_FE_PSE_BUF_SET")
+		fq=$(fe_rd "$PSE_FQ_CFG")
+		# NOTE: REG_FE_PSE_BUF_SET (0x90) reads back 0 on this silicon
+		# (write-only config register), so pse_all_rsv is NOT taken from it -
+		# it is derived below from the per-queue OQ reads. FQ_LIMIT (0x8c)
+		# is readable and holds the real total PSE page count.
+		pse_fq_limit=$(( fq & 0x7FFF ))
+		pse_used_lthd=$(( (psb >> 16) & 0xFFFF ))
+
+		iq_rev1=$(fe_rd "$REG_PSE_IQ_REV1")
+		iq_rev2=$(fe_rd "$REG_PSE_IQ_REV2")
+
+		for p_q in $PSE_PORT_QUEUES; do
+			port=${p_q%%:*}
+			nq=${p_q##*:}
+			oq=0
+			q=0
+			while [ "$q" -lt "$nq" ]; do
+				cfg_val=$(( (port << 24) | (q << 16) ))
+				devmem "$REG_FE_PSE_QUEUE_CFG_WR" 32 "$(printf "0x%08x" "$cfg_val")" > /dev/null 2>&1
+				v=$(fe_rd "$REG_FE_PSE_QUEUE_CFG_VAL")
+				oq=$(( oq + (v & 0x3FFF) ))
+				q=$((q + 1))
+			done
+			oq_total=$(( oq_total + oq ))
+
+			case "$port" in
+				2) iq=$(( (iq_rev1 >> 16) & 0xFF )) ;;
+				4) iq=$(( iq_rev2 & 0xFF )) ;;
+				5) iq=$(( (iq_rev2 >> 8) & 0xFF )) ;;
+				*) iq=0 ;;
+			esac
+
+			# Drops: only the GDM ports that own a netdev have counters.
+			# P1 = GDM1 (LAN switch), P2 = GDM2 (PON / WAN), P9 = GDM4 (2.5G).
+			drops=0
+			case "$port" in
+				1) [ -n "$gdm1_dev" ] && drops=$(read_netdev_stat "$gdm1_dev" rx_dropped) ;;
+				2) [ -n "$gdm2_dev" ] && drops=$(read_netdev_stat "$gdm2_dev" rx_dropped) ;;
+				9) [ -n "$gdm4_dev" ] && drops=$(read_netdev_stat "$gdm4_dev" rx_dropped) ;;
+			esac
+
+			[ -n "$pse_ports" ] && pse_ports="${pse_ports},"
+			pse_ports="${pse_ports}{\"port\":${port},\"queues\":${nq},\"iq\":${iq},\"oq\":${oq},\"drops\":${drops}}"
+		done
+
+		# Reserved total = sum of per-queue OQ reservations actually read back
+		# (matches what the driver programs in airoha_fe_pse_ports_init()).
+		pse_all_rsv=$oq_total
+		pse_free=$(( pse_fq_limit > pse_all_rsv ? pse_fq_limit - pse_all_rsv : 0 ))
+	else
+		# No /dev/mem: return the port list with zeroed reservations so the
+		# UI can still render the grid shape (greyed out with a hint).
+		for p_q in $PSE_PORT_QUEUES; do
+			port=${p_q%%:*}
+			nq=${p_q##*:}
+			[ -n "$pse_ports" ] && pse_ports="${pse_ports},"
+			pse_ports="${pse_ports}{\"port\":${port},\"queues\":${nq},\"iq\":0,\"oq\":0,\"drops\":0}"
+		done
+	fi
+
+	# === GDM counters ===
+	# Read through sysfs netdev statistics: the kernel driver accumulates the
+	# read-to-clear hardware MIB counters there, so these numbers are
+	# monotonic and race-free. Do NOT read those MIB registers via devmem.
+	printf '{"pse_ports":[%s],"pse_total":%d,"pse_reserved":%d,"pse_free":%d,"pse_used_lthd":%d,"devmem_ok":%d,"error":"%s",' \
+		"$pse_ports" "$pse_fq_limit" "$pse_all_rsv" "$pse_free" "$pse_used_lthd" "$devmem_ok" "$fe_error"
+	printf '"gdm1":%s,' "$(gdm_json "$gdm1_dev")"
+	printf '"gdm2":%s,' "$(gdm_json "$gdm2_dev")"
+	printf '"gdm4":%s}' "$(gdm_json "$gdm4_dev")"
+}
+
+case "$1" in
+	list)
+		echo '{"getStatus":{},"getPpeEntries":{},"getWifiInfo":{},"getTokenInfo":{},"getFrameEngine":{},"setGovernor":{"governor":"str"},"setMaxFreq":{"freq":"int"},"setOverclock":{"freq_mhz":"int"}}'
+		;;
+	call)
+		case "$2" in
+			getStatus)
+				get_status
+				;;
+			getPpeEntries)
+				get_ppe_entries
+				;;
+			getWifiInfo|getTokenInfo)
+				# getTokenInfo is the pre-1.2.0-r2 name of this method; it
+				# is still served so that a browser holding the older
+				# cached view keeps working instead of failing to load.
+				get_wifi_info
+				;;
+			setGovernor)
+				read input
+				set_governor "$input"
+				;;
+			setMaxFreq)
+				read input
+				set_max_freq "$input"
+				;;
+			setOverclock)
+				read input
+				set_overclock "$input"
+				;;
+			getFrameEngine)
+				get_frame_engine
+				;;
+			*)
+				echo '{"error":"Invalid method"}'
+				;;
+		esac
+		;;
+esac

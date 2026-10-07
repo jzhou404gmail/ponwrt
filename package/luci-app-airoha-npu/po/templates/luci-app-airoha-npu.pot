@@ -1,0 +1,232 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8"
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:534
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:575
+msgid "Active"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:514
+msgid "Airoha SoC Status"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:448
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:451
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:452
+msgid "Apply"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:447
+msgid "Applying..."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:122
+msgid "Band %d"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:524
+msgid "CPU Cores"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:518
+msgid "CPU Frequency"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:450
+msgid "CPU set to"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:157
+msgid "Channel"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:166
+msgid "Channel usage"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:158
+msgid "Clients"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:349
+msgid "Copper PHY (LAN)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:520
+msgid "Current Frequency"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:455
+msgid "Direct PLL. Stock max 1200 MHz. Stable up to 1500 MHz."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:174
+msgid "Downlink to the clients / uplink from the clients"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:428
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:437
+msgid "Error:"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:558
+msgid "Ethernet"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:449
+msgid "Failed:"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:536
+msgid "Firmware / Clock / Cores"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:545
+msgid "Frame Engine"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:446
+msgid "Frequencies above 1400 MHz may be unstable. Continue?"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:521
+msgid "Governor"
+msgstr ""
+
+#: root/usr/share/rpcd/acl.d/luci-app-airoha-npu.json:3
+msgid "Grant access to Airoha SoC status (NPU + CPU + Frame Engine)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:557
+msgid "Index"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:347
+msgid "LAN Switch (lan2-lan4)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:275
+msgid "Link"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:522
+msgid "Max Frequency"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:445
+msgid "Must be 500-1600 MHz"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:530
+msgid "NPU & Offload Engine"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:532
+msgid "NPU Status"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:205
+msgid "NPU offload active · WiFi → NPU → WDMA → PPE"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:558
+msgid "New Flow"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:354
+msgid ""
+"No GDM port resolved a netdev (the RPC returned none for gdm1/gdm2/gdm4)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:206
+msgid "No NPU offload path · WiFi → PCIe → GDM3 (P3) → PPE"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:485
+msgid "No offloaded flows"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:169
+msgid "Noise"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:535
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:575
+msgid "Not Active"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:558
+msgid "Original Flow"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:523
+msgid "Overclock"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:328
+msgid "PCIe (WiFi)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:348
+msgid "PON (WAN uplink)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:554
+msgid "PPE Flow Offload Entries"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:538
+msgid "Reserved Memory"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:177
+msgid "Retry rate"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:156
+msgid "SSID"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:162
+msgid "Signal (weakest)"
+msgstr ""
+
+#: root/usr/share/luci/menu.d/luci-app-airoha-npu.json:3
+msgid "SoC Status"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:557
+msgid "State"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:180
+msgid "TX failed"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:174
+msgid "Traffic"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:557
+msgid "Type"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:222
+msgid "WiFi"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:216
+msgid "WiFi chip temperature"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:215
+msgid "WiFi chip temperature (limit %s °C)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:276
+msgid "down"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/airoha_npu/status.js:276
+msgid "up"
+msgstr ""

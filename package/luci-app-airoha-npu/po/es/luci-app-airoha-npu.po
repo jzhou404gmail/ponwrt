@@ -1,0 +1,179 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-airoha-npu\n"
+"POT-Creation-Date: \n"
+"PO-Revision-Date: \n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Active"
+msgstr "Activo"
+
+msgid "Airoha SoC Status"
+msgstr "Estado del SoC Airoha"
+
+msgid "Apply"
+msgstr "Aplicar"
+
+msgid "Applying..."
+msgstr "Aplicando..."
+
+msgid "Band %d"
+msgstr "Banda %d"
+
+msgid "CPU Cores"
+msgstr "Núcleos de CPU"
+
+msgid "CPU Frequency"
+msgstr "Frecuencia de la CPU"
+
+msgid "CPU set to"
+msgstr "CPU configurada en"
+
+msgid "Channel"
+msgstr "Canal"
+
+msgid "Channel usage"
+msgstr "Uso del canal"
+
+msgid "Clients"
+msgstr "Clientes"
+
+msgid "Copper PHY (LAN)"
+msgstr "PHY de cobre (LAN)"
+
+msgid "Current Frequency"
+msgstr "Frecuencia actual"
+
+msgid "Direct PLL. Stock max 1200 MHz. Stable up to 1500 MHz."
+msgstr "PLL directo. Máx. de fábrica 1200 MHz. Estable hasta 1500 MHz."
+
+msgid "Downlink to the clients / uplink from the clients"
+msgstr "Enlace descendente a los clientes / enlace ascendente desde los clientes"
+
+msgid "Error:"
+msgstr "Error:"
+
+msgid "Ethernet"
+msgstr "Ethernet"
+
+msgid "Failed:"
+msgstr "Fallo:"
+
+msgid "Firmware / Clock / Cores"
+msgstr "Firmware / Reloj / Núcleos"
+
+msgid "Frame Engine"
+msgstr "Frame Engine"
+
+msgid "Frequencies above 1400 MHz may be unstable. Continue?"
+msgstr "Las frecuencias superiores a 1400 MHz pueden ser inestables. ¿Continuar?"
+
+msgid "Governor"
+msgstr "Regulador"
+
+msgid "Grant access to Airoha SoC status (NPU + CPU + Frame Engine)"
+msgstr "Otorgar acceso al estado del SoC Airoha (NPU + CPU + Frame Engine)"
+
+msgid "Index"
+msgstr "Índice"
+
+msgid "LAN Switch (lan2-lan4)"
+msgstr "Switch LAN (lan2-lan4)"
+
+msgid "Link"
+msgstr "Enlace"
+
+msgid "Max Frequency"
+msgstr "Máx. frecuencia"
+
+msgid "Must be 500-1600 MHz"
+msgstr "Debe estar entre 500 y 1600 MHz"
+
+msgid "NPU & Offload Engine"
+msgstr "NPU y motor de offload"
+
+msgid "NPU Status"
+msgstr "Estado de la NPU"
+
+msgid "NPU offload active · WiFi → NPU → WDMA → PPE"
+msgstr "Descarga NPU activa · WiFi → NPU → WDMA → PPE"
+
+msgid "New Flow"
+msgstr "Nuevo flujo"
+
+msgid "No GDM port resolved a netdev (the RPC returned none for gdm1/gdm2/gdm4)"
+msgstr "Ningún puerto GDM resolvió una interfaz de red (el RPC no devolvió ninguna para gdm1/gdm2/gdm4)"
+
+msgid "No NPU offload path · WiFi → PCIe → GDM3 (P3) → PPE"
+msgstr "Sin ruta de descarga NPU · WiFi → PCIe → GDM3 (P3) → PPE"
+
+msgid "No offloaded flows"
+msgstr "Sin flujos descargados"
+
+msgid "Noise"
+msgstr "Ruido"
+
+msgid "Not Active"
+msgstr "No activo"
+
+msgid "Original Flow"
+msgstr "Flujo original"
+
+msgid "Overclock"
+msgstr "Overclock"
+
+msgid "PCIe (WiFi)"
+msgstr "PCIe (WiFi)"
+
+msgid "PON (WAN uplink)"
+msgstr "PON (enlace WAN)"
+
+msgid "PPE Flow Offload Entries"
+msgstr "Entradas de offload de flujo PPE"
+
+msgid "Reserved Memory"
+msgstr "Memoria reservada"
+
+msgid "Retry rate"
+msgstr "Tasa de retransmisión"
+
+msgid "SSID"
+msgstr "SSID"
+
+msgid "Signal (weakest)"
+msgstr "Señal (cliente más débil)"
+
+msgid "SoC Status"
+msgstr "Estado del SoC"
+
+msgid "State"
+msgstr "Estado"
+
+msgid "TX failed"
+msgstr "TX fallidos"
+
+msgid "Traffic"
+msgstr "Tráfico"
+
+msgid "Type"
+msgstr "Tipo"
+
+msgid "WiFi"
+msgstr "WiFi"
+
+msgid "WiFi chip temperature"
+msgstr "Temperatura del chip WiFi"
+
+msgid "WiFi chip temperature (limit %s °C)"
+msgstr "Temperatura del chip WiFi (límite %s °C)"
+
+msgid "down"
+msgstr "caído"
+
+msgid "up"
+msgstr "activo"
