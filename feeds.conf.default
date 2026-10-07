@@ -8,3 +8,8 @@ src-git pon_userspace https://github.com/pbs05/openwrt-pon-userspace.git
 #src-git targets https://github.com/openwrt/targets.git
 #src-git oldpackages http://git.openwrt.org/packages.git
 #src-link custom /usr/src/openwrt/custom-feed
+
+# PassWall
+#src-git passwall https://github.com/Openwrt-Passwall/openwrt-passwall.git;main
+#src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main
+
