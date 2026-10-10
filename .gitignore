@@ -36,11 +36,10 @@ git-src
 .ccache
 .vscode*
 
-# 本机构建配置备份（./build.sh --config=<档> 会自动生成）与版本覆盖文件
-/.config.bak-*
-/.config.clobbered-*
-/.config.RESTORED-*
-/.config.old.*
+# 本机构建配置备份与版本覆盖文件：./build.sh --config=<档> 会生成 .config.<档>，
+# 被覆盖/还原时另有 .config.bak-* / .clobbered-* / .RESTORED-* / .old*。
+# 一律不入库：它们只是本机某一台机器的选择，跟 configs/ 里的种子配置不是一回事。
+/.config.*
 /version
 
 # 原厂固件转储与个人设备备份：体积大（数 GB）且含设备身份数据，绝不入库
