@@ -64,8 +64,10 @@ function injectCSS() {
 
 /* ── Helpers ── */
 /* PSE port map. P2 (GDM2) carries the XPON GEM data plane on PonWrt and is
- * the WAN; P9 (GDM4) is the board's copper PHY (2.5G EN8811 on the Nokia /
- * ZNXT boards, 10G RTL8261N on the Gemtek XG2010G), a LAN port here. */
+ * the WAN; the copper PHY (2.5G EN8811 on the Nokia / ZNXT boards, 10G
+ * RTL8261N on the Gemtek XG2010G) is a LAN port on P9 (GDM4) for AN7581 but
+ * on P3 (GDM3) for AN7583, so its cell is relabelled from the index the RPC
+ * resolved. */
 var psePortMap = [
 	{ name: 'CDM1', label: 'CPU DMA 1 (LAN)', color: '#607d8b' },
 	{ name: 'GDM1', label: 'LAN Switch', color: '#ff9800' },
@@ -248,12 +250,23 @@ function renderFeDiagram(fe, st, wf) {
 
 	var ports = Array.isArray(fe.pse_ports) ? fe.pse_ports : [];
 
+	// Copper PHY port (AN7581: GDM4/P9, AN7583: GDM3/P3). The backend
+	// resolves both the netdev and the GDM index from the live device tree;
+	// fall back to the legacy "gdm4" key for an older RPC.
+	var copper = fe.gdm_copper || fe.gdm4 || {};
+	var copperIdx = (fe.gdm_copper && fe.gdm_copper.index) ? fe.gdm_copper.index : 4;
+	// GDM index -> PSE port is not the identity: GDM3 is P3 but GDM4 is P9
+	// (P4..P8 carry the PPE engines and the CDMs). Mirrors gdm_pse_port() in
+	// the RPC, which uses the same rule to pick the right drop counter.
+	var copperPse = 'P' + (copperIdx === 4 ? 9 : copperIdx);
+
 	// Helper: GDM card. The netdev behind each GDM is resolved by the RPC
 	// backend from the running device tree, so the same view works whether
-	// the copper PHY is called wan, lan1 or lan5 on this board, and whether
-	// it is a 2.5G or a 10G port.
-	function gdmCard(key, name, label, color, pse) {
-		var d = fe[key] || {};
+	// the copper PHY is called wan, lan1 or lan5 on this board, whether it is
+	// a 2.5G or a 10G port, and whether it sits on GDM4 (AN7581) or GDM3
+	// (AN7583) - the backend reports its data and index as "gdm_copper".
+	function gdmCard(d, name, label, color, pse) {
+		d = d || {};
 		var present = !!d.netdev;
 		var active = present && (d.tx > 0 || d.rx > 0);
 		var head = E('div', { 'style': 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px' }, [
@@ -322,13 +335,20 @@ function renderFeDiagram(fe, st, wf) {
 	// it is the WiFi DMA path and this board has no such WiFi device)
 	var portCells = ports.filter(function(p) { return p.port !== 7; }).map(function(p) {
 		var info = psePortMap[p.port] || { name:'P'+p.port, label:'?', color:'#666' };
-		// P3 is GDM3, the PCIe MAC: on boards with WiFi that is the wireless
-		// data path, so label it accordingly instead of a bare "GDM3".
-		if (p.port === 3 && wf.wifi_present)
+		// P3 is GDM3: the copper 2.5G PHY on AN7583, the PCIe MAC (the
+		// wireless data path) on AN7581 boards with a WiFi card. Label it for
+		// what this board actually uses it for.
+		if (p.port === 3 && copperIdx === 3)
+			info = { name: 'GDM3', label: 'Copper PHY', color: '#4caf50' };
+		else if (p.port === 3 && wf.wifi_present)
 			info = { name: 'GDM3', label: _('PCIe (WiFi)'), color: '#9c27b0' };
+		// P9 is GDM4: the copper PHY on AN7581, but on AN7583 that GDM only
+		// reaches the PCIe/USB SerDes (there is no ethernet@4 there).
+		else if (p.port === 9 && copperIdx !== 4)
+			info = { name: 'GDM4', label: 'PCIe/USB SerDes', color: '#607d8b' };
 		// Drops are not repeated here: the only ports that have a drop counter
-		// are P1/P2/P9 (the three GDM netdevs) and those already report
-		// "RX Drop" on their own card above.
+		// are the two or three GDM ports owning a netdev, and those already
+		// report "RX Drop" on their own card above.
 		return E('div', { 'class': 'soc-pse-cell' }, [
 			E('div', { 'style': 'font-weight:600;color:'+info.color+';font-size:11px' }, 'P'+p.port+' '+info.name),
 			E('div', { 'class': 'soc-label', 'style': 'font-size:9px;margin-top:1px' }, info.label),
@@ -344,14 +364,14 @@ function renderFeDiagram(fe, st, wf) {
 	// silently rendering nothing is indistinguishable from a broken view.
 	function gdmCards() {
 		var cards = [
-			gdmCard('gdm1', 'GDM1', _('LAN Switch (lan2-lan4)'), '#ff9800', 'P1'),
-			gdmCard('gdm2', 'GDM2', _('PON (WAN uplink)'), '#00bcd4', 'P2'),
-			gdmCard('gdm4', 'GDM4', _('Copper PHY (LAN)'), '#4caf50', 'P9')
+			gdmCard(fe.gdm1, 'GDM1', _('LAN Switch (lan2-lan4)'), '#ff9800', 'P1'),
+			gdmCard(fe.gdm2, 'GDM2', _('PON (WAN uplink)'), '#00bcd4', 'P2'),
+			gdmCard(copper, 'GDM' + copperIdx, _('Copper PHY (LAN)'), '#4caf50', copperPse)
 		].filter(Boolean);
 
 		if (!cards.length)
 			cards.push(E('div', { 'class': 'soc-warn' },
-				_('No GDM port resolved a netdev (the RPC returned none for gdm1/gdm2/gdm4)')));
+				_('No GDM port resolved a netdev (the RPC returned none for gdm1/gdm2/gdm_copper)')));
 
 		return cards;
 	}
@@ -376,7 +396,7 @@ function renderFeDiagram(fe, st, wf) {
 				: 'Requires /dev/mem - enable CONFIG_KERNEL_DEVMEM=y and rebuild')
 		]),
 		// Row 1: GDM ports that actually have a netdev. On PonWrt the PON data
-		// path (GDM2) is the WAN and the 2.5G PHY (GDM4) is a LAN port.
+		// path (GDM2) is the WAN and the board's 2.5G/10G PHY is a LAN port.
 		E('div', { 'class': 'soc-gdm-grid' }, gdmCards()),
 		// Row 2: PPE flow summary
 		E('div', { 'style': 'margin-bottom:10px' }, [ ppeCard ]),

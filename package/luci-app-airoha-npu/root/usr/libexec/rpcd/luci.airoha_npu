@@ -20,10 +20,11 @@
 #
 # On PonWrt the roles are inverted: GDM2 carries the XPON GEM data plane
 # (the airoha ethernet driver names it pon%d -> "pon0", and airoha-xpon owns
-# its carrier state) and it is the WAN, while GDM4 is an ordinary copper LAN
-# port named by the board DTS. None of the netdev names are therefore stable
-# across the supported boards, so the GDM -> netdev map is resolved at
-# runtime from the live device tree instead of being hardcoded.
+# its carrier state) and it is the WAN, while the copper PHY is an ordinary
+# LAN port named by the board DTS. Neither the netdev names nor the GDM index
+# of that port are stable across the supported boards - AN7581 wires it to
+# GDM4, AN7583 to GDM3 - so the whole GDM -> netdev map is resolved at runtime
+# from the live device tree instead of being hardcoded.
 
 . /lib/functions.sh
 
@@ -99,8 +100,9 @@ of_node_available() {
 }
 
 # Helper: link speed label of a GDM netdev, taken from the device tree
-# phy-mode. GDM4 is an EN8811 2.5G PHY on the Nokia / ZNXT boards but a
-# RTL8261N 10G PHY on the Gemtek XG2010G, so this cannot be hardcoded.
+# phy-mode. The copper GDM carries an EN8811 2.5G PHY on the Nokia / ZNXT
+# boards but a RTL8261N 10G PHY on the Gemtek XG2010G, so this cannot be
+# hardcoded - and neither can the GDM index it sits on.
 gdm_speed() {
 	local node mode
 
@@ -117,6 +119,47 @@ gdm_speed() {
 		internal) echo "switch" ;;
 		"") return 1 ;;
 		*) echo "$mode" ;;
+	esac
+}
+
+# Helper: GDM index of the board's copper PHY port.
+#
+# Upstream assumed GDM4 (netdev "wan") because that is where the AN7581 puts
+# its external PHY. AN7583 does NOT: it has no ethernet@4 node at all - the
+# 2.5G EN8811H hangs off GDM3 (ethernet@3, netdev lan1) there, while GDM4 is
+# only reachable through the PCIe/USB SerDes (see an7583_get_sport() in the
+# kernel). Hardcoding 4 therefore left the copper card empty on the AN7583
+# boards and the SOC page showed no 2.5G port at all.
+#
+# Identify the port by its DTS phy-mode instead of its index: the copper PHY
+# is the GDM whose netdev runs a SerDes mode towards an external PHY
+# (2500base-x, 10gbase-r, usxgmii, ...), whereas GDM1 reports "internal" and
+# GDM2 (PON) has no phy-mode property at all.
+gdm_copper_index() {
+	local i dev
+
+	for i in 4 3; do
+		dev=$(gdm_netdev "$i") || continue
+		[ -n "$dev" ] || continue
+		case "$(gdm_speed "$dev")" in
+			2.5G|10G|1G)
+				echo "$i"
+				return 0
+				;;
+		esac
+	done
+
+	return 1
+}
+
+# Helper: PSE port number of a GDM. The two numbers are NOT the same: the PSE
+# port of GDM3 is P3, but GDM4's is P9 (P4..P8 are the PPE engines and the CDMs,
+# see the psePortMap in status.js). Comparing a PSE port straight against a GDM
+# index therefore silently reported 0 drops for the copper port on AN7581.
+gdm_pse_port() {
+	case "$1" in
+		4) echo 9 ;;
+		1|2|3) echo "$1" ;;
 	esac
 }
 
@@ -184,6 +227,21 @@ gdm_json() {
 	printf '{"netdev":"%s","present":%s,"link":%s,"speed":"%s","tx":%d,"tx_drop":%d,"rx":%d,"rx_drop":%d}' \
 		"$dev" "$present" "$linked" "${speed:-}" \
 		"${tx:-0}" "${txd:-0}" "${rx:-0}" "${rxd:-0}"
+}
+
+# Helper: the same object as gdm_json(), plus the resolved GDM index of the
+# copper PHY. The index travels with the data so the UI can name the card
+# (GDM3 on AN7583, GDM4 on AN7581) and label the matching PSE port instead of
+# hardcoding "gdm4" / "P9" the way upstream did.
+gdm_copper_json() {
+	local idx="$1" dev="$2" body
+
+	body=$(gdm_json "$dev")
+	if [ -n "$idx" ]; then
+		printf '{"index":%s,%s' "$idx" "${body#\{}"
+	else
+		printf '%s' "$body"
+	fi
 }
 
 get_status() {
@@ -842,12 +900,17 @@ get_frame_engine() {
 
 	# === GDM port -> netdev map ===
 	# GDM2 carries the XPON GEM data plane (netdev "pon0", the WAN) on every
-	# PonWrt board; GDM1 is the embedded switch master; GDM4 is the board's
-	# copper PHY, which the DTS names lan1 on most boards but exposes as two
-	# ports (lan1/lan5, lan5/lan6) on the usb-sfp variants. Resolve all of
-	# them from the live device tree.
+	# PonWrt board; GDM1 is the embedded switch master; the copper PHY owns
+	# GDM4 on AN7581 but GDM3 on AN7583, and the DTS names its netdev lan1 on
+	# most boards while the usb-sfp variants expose two ports there
+	# (lan1/lan5, lan5/lan6). Resolve all of them from the live device tree.
 	local gdm1_dev=$(gdm_netdev 1)
 	local gdm2_dev=$(gdm_netdev 2)
+	local gdm_copper_idx=$(gdm_copper_index)
+	local gdm_copper_dev=""
+	[ -n "$gdm_copper_idx" ] && gdm_copper_dev=$(gdm_netdev "$gdm_copper_idx")
+	local gdm_copper_pse=$(gdm_pse_port "$gdm_copper_idx")
+	# Legacy key for clients that predate "gdm_copper"; empty on AN7583.
 	local gdm4_dev=$(gdm_netdev 4)
 
 	# Only fall back to guessing by netdev name when this kernel does not
@@ -856,7 +919,12 @@ get_frame_engine() {
 	if ! of_node_available; then
 		[ -n "$gdm1_dev" ] || gdm1_dev=$(find_gdm_dev dsa-mgr eth0)
 		[ -n "$gdm2_dev" ] || gdm2_dev=$(find_gdm_dev pon0)
-		[ -n "$gdm4_dev" ] || gdm4_dev=$(find_gdm_dev lan1 wan eth1)
+		[ -n "$gdm_copper_dev" ] || gdm_copper_dev=$(find_gdm_dev lan1 wan eth1)
+		# Without the device tree there is no way to tell the layouts
+		# apart, so keep the historical assumption.
+		[ -n "$gdm_copper_idx" ] || gdm_copper_idx=4
+		gdm_copper_pse=$(gdm_pse_port "$gdm_copper_idx")
+		[ -n "$gdm4_dev" ] || gdm4_dev="$gdm_copper_dev"
 	fi
 
 	# === PSE shared buffer ===
@@ -911,13 +979,17 @@ get_frame_engine() {
 			esac
 
 			# Drops: only the GDM ports that own a netdev have counters.
-			# P1 = GDM1 (LAN switch), P2 = GDM2 (PON / WAN), P9 = GDM4 (2.5G).
+			# P1 = GDM1 (LAN switch), P2 = GDM2 (PON / WAN), and the
+			# copper PHY owns P9 (GDM4) on AN7581 / P3 (GDM3) on AN7583
+			# - gdm_copper_pse above says which one applies here.
 			drops=0
 			case "$port" in
 				1) [ -n "$gdm1_dev" ] && drops=$(read_netdev_stat "$gdm1_dev" rx_dropped) ;;
 				2) [ -n "$gdm2_dev" ] && drops=$(read_netdev_stat "$gdm2_dev" rx_dropped) ;;
-				9) [ -n "$gdm4_dev" ] && drops=$(read_netdev_stat "$gdm4_dev" rx_dropped) ;;
 			esac
+			if [ -n "$gdm_copper_pse" ] && [ "$port" = "$gdm_copper_pse" ]; then
+				[ -n "$gdm_copper_dev" ] && drops=$(read_netdev_stat "$gdm_copper_dev" rx_dropped)
+			fi
 
 			[ -n "$pse_ports" ] && pse_ports="${pse_ports},"
 			pse_ports="${pse_ports}{\"port\":${port},\"queues\":${nq},\"iq\":${iq},\"oq\":${oq},\"drops\":${drops}}"
@@ -946,6 +1018,7 @@ get_frame_engine() {
 		"$pse_ports" "$pse_fq_limit" "$pse_all_rsv" "$pse_free" "$pse_used_lthd" "$devmem_ok" "$fe_error"
 	printf '"gdm1":%s,' "$(gdm_json "$gdm1_dev")"
 	printf '"gdm2":%s,' "$(gdm_json "$gdm2_dev")"
+	printf '"gdm_copper":%s,' "$(gdm_copper_json "$gdm_copper_idx" "$gdm_copper_dev")"
 	printf '"gdm4":%s}' "$(gdm_json "$gdm4_dev")"
 }
 
