@@ -140,6 +140,21 @@ function outline(node, ind, out) {
 }
 const pseCells = tree => countClass(tree, 'soc-pse-cell');
 
+/* 找到 "P<port> ..." 那一格并返回它的文字，用来断言 PSE 端口标签。 */
+function pseCell(tree, port) {
+	let hit = '';
+	(function walk(x) {
+		if (!x || hit) return;
+		if (Array.isArray(x)) return x.forEach(walk);
+		if (typeof x !== 'object') return;
+		if (String((x.attrs || {}).class || '').includes('soc-pse-cell') && x.text.startsWith('P' + port + ' '))
+			{ hit = x.text; return; }
+		if (x.children) x.children.forEach(walk);
+		if (x.kids) x.kids.forEach(walk);
+	})(tree);
+	return hit;
+}
+
 (async function main() {
 	for (const f of files) {
 		const fixtureBase = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
@@ -160,13 +175,13 @@ const pseCells = tree => countClass(tree, 'soc-pse-cell');
 		outline(tree, '  ', out);
 		console.log(out.join('\n'));
 
-		const gdm = countCards(tree, /GDM[124]/);
+		const gdm = countCards(tree, /GDM[1234]/);
 		console.log('  -> 首次渲染: GDM 卡 ' + gdm + ' 张, PSE 端口格 ' + pseCells(tree) + ' 个');
-		if (gdm !== 3) { console.log('  !! 期望 3 张 GDM 卡（GDM1/GDM2/GDM4）'); failures++; }
+		if (gdm !== 3) { console.log('  !! 期望 3 张 GDM 卡（GDM1/GDM2 + 铜口那张）'); failures++; }
 
 		if (!pollStub.fn) { console.log('  !! 视图没有注册 poll 回调'); failures++; continue; }
 		await pollStub.fn();
-		const feAfter = countCards(elements['fe-container'].children, /GDM[124]/);
+		const feAfter = countCards(elements['fe-container'].children, /GDM[1234]/);
 		const wc = elements['wifi-container'];
 		const tb = elements['ppe-entries-table'];
 		console.log('  -> 轮询刷新后: #fe-container GDM 卡 ' + feAfter + ' 张, #wifi-container 子节点 '
@@ -178,10 +193,56 @@ const pseCells = tree => countClass(tree, 'soc-pse-cell');
 		await pollStub.fn();
 		const feEmpty = elements['fe-container'].children;
 		const warn = countClass(feEmpty, 'soc-warn');
-		console.log('  -> 降级（getFrameEngine 返回 {}）: GDM 卡 ' + countCards(feEmpty, /GDM[124]/)
+		console.log('  -> 降级（getFrameEngine 返回 {}）: GDM 卡 ' + countCards(feEmpty, /GDM[1234]/)
 			+ ' 张, 提示条 ' + warn + ' 个' + (warn === 1 ? '  ✅ 说明了原因' : '  !! 静默空白'));
 		if (warn !== 1) failures++;
 	}
+
+	/* ── AN7583 布局：铜口在 GDM3 / PSE P3 ──
+	 * 手边没有 AN7583（XG-040G-MF）的整机抓包，所以这份载荷由 fixtures/504.json
+	 * （真实抓包，AN7581 / ZN504XG-D）按 docs/xg-040g-mf-an7583-2p5g-fix.md 里记下的
+	 * AN7583 拓扑改写而成：铜口挂在 GDM3（PSE 端口 P3），AN7583 没有 ethernet@4 节点
+	 * 因而 gdm4 取空、P9 只剩 PCIe/USB SerDes、板上没有 WiFi。
+	 *
+	 * 这里断言的是本次修复的核心：卡片名与 PSE 标签都跟着 RPC 解析出的序号走。
+	 * 写死 gdm4/P9 的老实现会让这张载荷渲染出 0 张铜口卡（正是现场看到的现象）。
+	 */
+	{
+		const base = JSON.parse(fs.readFileSync(path.join(dir, '504.json'), 'utf8'));
+		const fe = JSON.parse(JSON.stringify(base.getFrameEngine));
+		fe.gdm4 = { netdev: '', present: false, link: false, speed: '', tx: 0, tx_drop: 0, rx: 0, rx_drop: 0 };
+		fe.gdm_copper = { index: 3, netdev: 'lan1', present: true, link: true, speed: '2.5G',
+			tx: 4653, tx_drop: 0, rx: 1234, rx_drop: 0 };
+		fixture = Object.assign({}, base, { getFrameEngine: fe });
+		Object.keys(elements).forEach(k => delete elements[k]);
+
+		console.log('\n############ AN7583 布局（504 真实抓包改写：gdm_copper.index=3） ############');
+		let tree;
+		try {
+			tree = view.render([fixture.getStatus, fixture.getPpeEntries, fixture.getWifiInfo, fixture.getFrameEngine]);
+		} catch (e) {
+			console.log('  !! render() THREW: ' + e.message);
+			tree = null; failures++;
+		}
+		if (tree) {
+			const out = [];
+			outline(tree, '  ', out);
+			console.log(out.join('\n'));
+
+			const checks = [
+				[countCards(tree, /GDM3.*Copper PHY/) === 1, '铜口卡命名为 GDM3 且带 Copper PHY'],
+				[countCards(tree, /GDM[1234]/) === 3, 'GDM 卡 3 张（GDM1/GDM2/GDM3）'],
+				[/Copper PHY/.test(pseCell(tree, 3)), 'P3 标成 Copper PHY'],
+				[/PCIe\/USB SerDes/.test(pseCell(tree, 9)), 'P9 标成 PCIe/USB SerDes'],
+				[!/Copper PHY/.test(pseCell(tree, 9)), 'P9 不再谎称 Copper PHY']
+			];
+			for (const [ok, what] of checks) {
+				console.log('  -> ' + (ok ? '✅ ' : '!! ') + what);
+				if (!ok) failures++;
+			}
+		}
+	}
+
 	console.log('\n' + (failures ? '❌ 失败项: ' + failures : '✅ 全部通过'));
 	process.exit(failures ? 1 : 0);
 })();
