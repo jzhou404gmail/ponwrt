@@ -11,6 +11,21 @@ board=$(board_name)
 case "$board" in
 nokia,xg-040g-mf|\
 nokia,xg-040g-mf-ubi)
+	# Panel LAN1 is the EN8811H 2.5G PHY. Unlike the AN7581 boards, whose
+	# 2.5G PHY hangs off the switch's internal "mt7530-0" MDIO bus, the AN7583
+	# describes it on the SoC MDIO controller (mdio-bus@c8, a child of the
+	# scuclk syscon - hence the "1fb00000.system-controller:" prefix in the
+	# MDIO device name) at PHY address 0x0f. A PHY LED class device is named
+	# "<mdio-device>:<color>:<function>-<enumerator>", so the 2.5G jack is
+	# "...:0f:green:lan-1".
+	#
+	# The trigger is not optional: air_leds_init() puts the PHY LED outputs
+	# into user-defined (external control) mode, and the LED core clears the
+	# driver's rules when it registers the class device with brightness 0. The
+	# "default-state = keep" in the DTS therefore does NOT give hardware link
+	# indication - without a netdev trigger the jack stays dark even with the
+	# port linked at 2.5Gbps.
+	ucidef_set_led_netdev "lan1" "lan1" "1fb00000.system-controller:mdio-bus@c8-mii:0f:green:lan-1" "lan1" "link tx rx"
 	ucidef_set_led_netdev "lan2" "lan2" "mt7530-0:0a:green:lan-2" "lan2" "link tx rx"
 	ucidef_set_led_netdev "lan3" "lan3" "mt7530-0:0b:green:lan-3" "lan3" "link tx rx"
 	ucidef_set_led_netdev "lan4" "lan4" "mt7530-0:0c:green:lan-4" "lan4" "link tx rx"
