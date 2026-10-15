@@ -408,6 +408,22 @@ cd ponwrt
 ./scripts/feeds install -a
 ```
 
+**分支政策：只保留一条主线**。`master` 就是这条线 —— 上游 `pbs05/ponwrt` + 本 fork 的
+全部改动，**编译一律用它**：
+
+```sh
+git clone -b master https://github.com/jzhou404gmail/ponwrt.git
+git fetch origin && git merge origin/master     # 同步上游
+```
+
+- `pr/*` 三个分支（`pr/hg5585f-ct-gpy211c`、`pr/iptv-mac-learning`、`pr/ung00a-panel-order`）
+  **不是第二条主线**，只是给上游提 PR 用的提交快照，对应上游还开着的 PR
+  [#34](https://github.com/pbs05/ponwrt/pull/34) / [#35](https://github.com/pbs05/ponwrt/pull/35) /
+  [#33](https://github.com/pbs05/ponwrt/pull/33)；PR 合并后就可以删。
+- 本机 `.git/config` 里设了 `branch.master.pushRemote=fork`：站在 `master` 上敲 `git push`
+  推的是**自己的 fork**，不会误推到上游（`branch.master.remote` 仍是 `origin`，
+  所以 `git status` 里"领先上游多少个提交"照样能看）。
+
 ### 5.3 三种编译方式
 
 ```sh
