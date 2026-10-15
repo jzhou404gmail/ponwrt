@@ -25,6 +25,7 @@ var themeCSS = '\
 .soc-warn{background:rgba(255,193,7,.14);border:1px solid #f9a825;border-radius:6px;padding:8px 10px;font-size:12px;color:var(--soc-text)}\
 .soc-gdm-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px}\
 .soc-cdm-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:10px}\
+.soc-cdm4-band-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}\
 ';
 
 function isDarkMode() {
@@ -106,20 +107,30 @@ function fmtMemKb(kb) {
 }
 
 /* ── WiFi ──
+ * Drawn inside the CDM4 card described below, which is where the SoC status
+ * page puts the WiFi DMA port.
+ *
  * Written for the MT7916D of the FiberHome HG5585F, which exposes two phys
  * (phy0-ap0 / phy1-ap0), but the band of every interface is resolved by the
  * RPC backend from its runtime centre frequency, so any layout works.
  *
  * Only the MT7996/MT7992 boards offload WiFi traffic to the NPU; the MT7916
- * has no such path, and the header says so instead of showing a badge that
+ * has no such path, and the subtitle says so instead of showing a badge that
  * would mean nothing here.
  *
  * Every row is drawn only when the backend could really read that value, so
  * an idle band shows its channel and nothing else instead of a wall of
  * zeros. Values shared by all bands (the chip temperature) are shown once in
- * the section header rather than repeated on every card.
+ * the card header rather than repeated on every band card.
  */
-var bandNames = ['2.4 GHz', '5 GHz', '6 GHz'];
+/* This page has content for 2.4 GHz and 5 GHz only: every supported board
+ * carries an MT7916D, whose two radios are those two bands, and the upstream
+ * 6 GHz chip the CDM4 card used to grow had nothing behind it here - the
+ * RPC maps anything at or above 5925 MHz to band index 2, and a band with no
+ * card of its own was being drawn as an empty placeholder. Bands above 5 GHz
+ * are therefore not drawn at all, which is the same rule the rest of this
+ * section already follows for a disabled radio. */
+var bandNames = ['2.4 GHz', '5 GHz'];
 
 function bandLabel(b) { return bandNames[b] || _('Band %d').format(b); }
 
@@ -141,7 +152,7 @@ function signalColor(dbm) {
 	return dbm >= -60 ? '#4caf50' : dbm >= -70 ? '#ff9800' : '#f44336';
 }
 
-var bandColors = ['#ff9800', '#2196f3', '#9c27b0'];
+var bandColors = ['#ff9800', '#2196f3'];
 
 /* One card per band, deliberately in the same visual language as the GDM
  * cards: coloured left border, title with a badge for the interface, then a
@@ -191,15 +202,25 @@ function renderBandCard(b) {
 	]);
 }
 
-function renderWifi(wf) {
+/* The CDM4 card. CDM4 is PSE port P7, the DMA engine the WiFi path uses
+ * where one exists: on the MT7996 boards that offload to the NPU this really
+ * is WiFi -> NPU -> WDMA(CDM4) -> PPE. On the MT7916D boards (HG5585F) it is
+ * not - that chip reaches the switch over PCIe/GDM3 - so the subtitle keeps
+ * naming the path this board actually uses while the card still reports the
+ * P7 queue occupancy and the two radios, which is what the SoC status page is
+ * read for.
+ *
+ * Rendered only where the backend found wireless; a board with no radio gets
+ * CDM1/CDM2 and no CDM4 at all.
+ */
+function renderWifi(wf, ports, devmemOk) {
 	if (!wf || !wf.wifi_present) return null;
 
 	// A radio that is configured out has no channel and nothing to report it
 	// with, so it gets no card at all.
 	var bands = (Array.isArray(wf.bands) ? wf.bands : []).filter(function(b) {
-		return b && (b.channel > 0 || b.count > 0);
+		return b && b.band >= 0 && b.band < bandNames.length && (b.channel > 0 || b.count > 0);
 	}).sort(function(a, b) { return a.band - b.band; });
-	if (!bands.length) return null;
 
 	var sub = [];
 	if (wf.chip) sub.push(wf.chip);
@@ -208,7 +229,7 @@ function renderWifi(wf) {
 		: _('No NPU offload path · WiFi → PCIe → GDM3 (P3) → PPE'));
 
 	// The chip temperature sensor is shared by both phys (one MT7916 die), so
-	// it belongs to the section, not to a single band.
+	// it belongs to the card header, not to a single band.
 	var temp = null;
 	if (wf.temp_c != null) {
 		temp = E('span', {
@@ -219,13 +240,37 @@ function renderWifi(wf) {
 		}, Number(wf.temp_c).toFixed(0) + ' °C');
 	}
 
-	return E('div', { 'class': 'cbi-section' }, [
-		E('h3', { 'style': 'display:flex;justify-content:space-between;align-items:center' }, [
-			E('span', {}, _('WiFi')),
-			temp
+	// P7 queue occupancy: the instantaneous IQ/OQ depth of the WDMA port, not
+	// a traffic counter. Only meaningful with /dev/mem, so it is left out
+	// entirely rather than printed as a pair of zeros.
+	var p7 = null;
+	if (Array.isArray(ports)) {
+		ports.forEach(function(p) { if (p && p.port === 7) p7 = p; });
+	}
+	var queues = (devmemOk && p7)
+		? E('div', { 'style': 'display:flex;gap:12px;font-size:12px;margin-bottom:8px' }, [
+			E('span', { 'class': 'soc-muted', 'title': _('Instantaneous PSE queue occupancy of the WDMA port') }, 'IQ ' + p7.iq),
+			E('span', { 'class': 'soc-muted' }, 'OQ ' + p7.oq)
+		])
+		: null;
+
+	// No band up (every radio disabled) is still a fact worth one line: the
+	// card exists because the board has wireless hardware.
+	var body = bands.length
+		? E('div', { 'class': 'soc-cdm4-band-grid' }, bands.map(renderBandCard))
+		: E('div', { 'class': 'soc-muted', 'style': 'font-size:12px' }, _('No radio is up'));
+
+	return E('div', { 'class': 'soc-card soc-card-accent', 'style': 'border-left-color:#9c27b0;margin-bottom:10px' }, [
+		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px' }, [
+			E('span', { 'style': 'font-weight:bold;color:#9c27b0;font-size:14px' }, 'CDM4'),
+			E('span', { 'style': 'display:flex;align-items:center;gap:6px' }, [
+				temp,
+				E('span', { 'class': 'soc-label' }, 'P7 WiFi DMA')
+			])
 		]),
-		E('div', { 'class': 'soc-muted', 'style': 'font-size:12px;margin-bottom:8px' }, sub.join(' · ')),
-		E('div', { 'class': 'soc-gdm-grid' }, bands.map(renderBandCard))
+		E('div', { 'class': 'soc-label', 'style': 'margin-bottom:6px' }, sub.join(' · ')),
+		queues,
+		body
 	]);
 }
 
@@ -301,6 +346,64 @@ function renderFeDiagram(fe, st, wf) {
 		]);
 	}
 
+	// Helper: CDM (CPU DMA) card. Every board has both CPU DMA engines, with
+	// or without wireless, so CDM1 (P0) and CDM2 (P5) are unconditional:
+	// RXCPU_OK counts the frames the CPU had to handle in software and
+	// RXHWF_OK the frames the hardware forwarded, so their ratio is the
+	// offload share.
+	//
+	// The bar deliberately does NOT turn red when the share is low. Measured
+	// on the HG5585F: CDM1 TX/RX equal the copper port's netdev counters
+	// exactly, and with no WAN uplink every one of those frames is traffic the
+	// router terminates itself (SSH, DNS, the web UI) - which the hardware
+	// never offloads, so 0 % is the correct reading, not a fault. Since the
+	// registers cannot separate locally-terminated traffic from forwarded
+	// traffic, red is reserved for the drop counters, which do indicate a
+	// fault.
+	function cdmCard(name, label, pse, color, d) {
+		// "have" is about the data, not the hardware: without /dev/mem, or
+		// against an RPC that predates the CDM counters, the card still names
+		// the engine but reports no number rather than a zero that would read
+		// as a measurement.
+		var have = devmemOk && d && typeof d.rx_cpu === 'number';
+		d = d || {};
+		var cpu = d.rx_cpu || 0, hwf = d.rx_hwf || 0;
+		var total = cpu + hwf;
+		var pct = total > 0 ? (hwf / total) * 100 : 0;
+		var barColor = total === 0 ? '#9e9e9e' : pct > 80 ? '#4caf50' : pct > 50 ? '#7cb342' : '#607d8b';
+
+		var head = E('div', { 'style': 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px' }, [
+			E('span', { 'style': 'font-weight:bold;color:'+color+';font-size:14px' }, name),
+			E('span', { 'class': 'soc-label' }, pse)
+		]);
+		var sub = E('div', { 'class': 'soc-label', 'style': 'margin-bottom:6px' }, label);
+
+		if (!have)
+			return E('div', { 'class': 'soc-card soc-card-accent', 'style': 'border-left-color:'+color }, [
+				head, sub,
+				E('div', { 'class': 'soc-muted', 'style': 'font-size:12px' },
+					_('Counters unavailable') + ' \u2014 ' + (devmemOk
+						? _('this RPC reports no CDM counters')
+						: _('no /dev/mem')))
+			]);
+
+		var body = [
+			E('div', { 'class': 'soc-text', 'style': 'font-size:12px;margin-bottom:4px',
+				'title': _('Frames forwarded by the hardware instead of the CPU. Traffic the router terminates itself is never offloaded, so a low share is normal.') },
+				_('HW Offload') + ': ' + (total > 0 ? pct.toFixed(1) + ' %' : '\u2014')),
+			E('div', { 'class': 'soc-bar-track', 'style': 'height:6px' }, [
+				E('div', { 'style': 'background:'+barColor+';height:100%;width:'+(total > 0 ? pct.toFixed(1) : '0')+'%;border-radius:4px;transition:width .5s' })
+			]),
+			E('div', { 'style': 'display:flex;justify-content:space-between;gap:6px;font-size:12px;margin-top:6px' }, [
+				E('span', { 'class': 'soc-muted' }, _('CPU') + ': ' + fmtK(cpu)),
+				E('span', { 'class': 'soc-muted' }, _('HWF') + ': ' + fmtK(hwf)),
+				E('span', { 'class': 'soc-muted' }, _('TX') + ': ' + fmtK(d.tx))
+			])
+		];
+
+		return E('div', { 'class': 'soc-card soc-card-accent', 'style': 'border-left-color:'+color }, [ head, sub ].concat(body));
+	}
+
 	// NPU status, firmware, clock and core count are all reported by the
 	// "NPU & Offload Engine" table above, so the diagram deliberately does not
 	// repeat them in a card of its own.
@@ -331,8 +434,9 @@ function renderFeDiagram(fe, st, wf) {
 	var pseP = (pseT > 0 && isFinite(pseR/pseT)) ? ((pseR/pseT)*100).toFixed(1) : '0';
 	var pseCol = parseFloat(pseP)>80?'#f44336':parseFloat(pseP)>50?'#ff9800':'#4caf50';
 
-	// PSE port cells (full hardware port map, P0..P10; P7=CDM4/WDMA hidden -
-	// it is the WiFi DMA path and this board has no such WiFi device)
+	// PSE port cells (full hardware port map, P0..P10). P7 is left out of the
+	// grid because it has a card of its own above: the CDM4 / P7 WiFi DMA card
+	// reports the same queue occupancy next to the radios it belongs to.
 	var portCells = ports.filter(function(p) { return p.port !== 7; }).map(function(p) {
 		var info = psePortMap[p.port] || { name:'P'+p.port, label:'?', color:'#666' };
 		// P3 is GDM3: the copper 2.5G PHY on AN7583, the PCIe MAC (the
@@ -398,7 +502,16 @@ function renderFeDiagram(fe, st, wf) {
 		// Row 1: GDM ports that actually have a netdev. On PonWrt the PON data
 		// path (GDM2) is the WAN and the board's 2.5G/10G PHY is a LAN port.
 		E('div', { 'class': 'soc-gdm-grid' }, gdmCards()),
-		// Row 2: PPE flow summary
+		// Row 2: the two CPU DMA engines. They are drawn on every board -
+		// they are part of the SoC, not of a wireless option - while the
+		// CDM4 (P7 WiFi DMA) card below them only appears on a board whose
+		// backend really found wireless.
+		E('div', { 'class': 'soc-cdm-grid' }, [
+			cdmCard('CDM1', _('CPU DMA 1'), 'P0', '#607d8b', fe.cdm1),
+			cdmCard('CDM2', _('CPU DMA 2'), 'P5', '#607d8b', fe.cdm2)
+		]),
+		renderWifi(wf, ports, devmemOk),
+		// Row 3: PPE flow summary
 		E('div', { 'style': 'margin-bottom:10px' }, [ ppeCard ]),
 		// PSE port grid
 		E('div', { 'class': 'soc-text', 'style': 'font-size:12px;font-weight:600;margin-bottom:6px' }, 'PSE Port Queue Status'),
@@ -519,7 +632,13 @@ function renderPpeRows(entries) {
 /* ── Main View ── */
 return view.extend({
 	load: function() {
-		return Promise.all([ callNpuStatus(), callPpeEntries(), callFrameEngine() ]);
+		// The order is the order render() reads: st, ppe, wf, fe. Leaving
+		// callWifiInfo() out here (as this page used to) shifted the frame
+		// engine payload into the WiFi slot and left the Frame Engine section
+		// showing "data not available" until the first poll five seconds
+		// later - so on a board with wireless the CDM4 card was missing from
+		// the first paint as well.
+		return Promise.all([ callNpuStatus(), callPpeEntries(), callWifiInfo(), callFrameEngine() ]);
 	},
 
 	render: function(data) {
@@ -566,8 +685,9 @@ return view.extend({
 				E('div',{'id':'fe-container'}, renderFeDiagram(fe, st, wf))
 			]),
 
-			// WiFi (only rendered on boards that actually have wireless)
-			E('div',{'id':'wifi-container'}, [ renderWifi(wf) ].filter(Boolean)),
+			// WiFi is no section of its own any more: it is drawn inside the
+			// CDM4 card of the Frame Engine diagram above, so this container
+			// is gone and the card refreshes with #fe-container.
 
 			// PPE Flow Table
 			E('div',{'class':'cbi-section'},[
@@ -598,12 +718,11 @@ return view.extend({
 				if(ni){ni.textContent=(st.npu_version||'N/A')+' | '+(st.npu_clock?(st.npu_clock/1e6).toFixed(0)+' MHz':'N/A')+' | '+(st.npu_cores||0)+' cores';}
 
 				// Each section is refreshed independently: one failing section
-				// keeps its previous content and the others still update.
+				// keeps its previous content and the others still update. The
+				// CDM4/WiFi card is part of #fe-container now, so a board
+				// without wireless simply never draws it (renderWifi returns
+				// null there) without emptying anything else.
 				updateSection('fe-container', function(){ return renderFeDiagram(fe, st, wf); });
-
-				// A null here means "this board has no wireless to report", so
-				// the container is emptied; it is never emptied on an error.
-				updateSection('wifi-container', function(){ return renderWifi(wf); });
 
 				var tb=document.getElementById('ppe-entries-table');
 				if(tb){

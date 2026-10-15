@@ -43,11 +43,69 @@ REG_PSE_IQ_REV2=0x1fb5010c             # IQ reserved, P5 bits 15:8, P4 bits 7:0
 #                    6=CDM3 7=CDM4 8=PPE2 9=GDM4 10=CDM5
 PSE_PORT_QUEUES="0:6 1:6 2:32 3:6 4:4 5:6 6:8 7:10 8:4 9:2 10:2"
 
+# --- CDM (CPU DMA) MIB counters ---------------------------------------------
+# CDM1_BASE = 0x0400 and CDM2_BASE = 0x1400 (airoha_regs.h). Each CDM block
+# owns its packet counter bank at +0x180. CDM1 is PSE port P0 (CPU DMA 1),
+# CDM2 is P5 (CPU DMA 2).
+#
+# This is a READ-ONLY userspace view of the CPU DMA ports. Unlike the GDM MIB
+# these counters are NOT consumed by the kernel: airoha_eth.c only ever touches
+# the CDM *configuration* registers (REG_CDM_VLAN_CTRL / REG_CDM_FWD_CFG /
+# REG_CDM_CRSN_QSEL), so nothing accumulates them and a read here steals no
+# counts. Verified on the HG5585F-CT: four consecutive reads of CDM1 TX_OK
+# returned 113/114/115/116, i.e. cumulative and not read-to-clear.
+#
+# Only the three counters below are read, because only these three were
+# confirmed to be counters on real hardware (tests/cdm_regs.sh):
+#   +0x180 TX_OK      - frames this CPU DMA port transmitted. Measured to
+#                       track the TX of the GDM ports on that side (CDM1 =
+#                       eth0 + lan1, CDM2 = pon0) to within the packets that
+#                       crossed between the two reads: exactly equal in two
+#                       runs, 2 and 7 packets apart in others.
+#   +0x190 RXCPU_OK   - frames delivered to the CPU.
+#   +0x194 RXHWF_OK   - frames the hardware forwarded instead of the CPU
+#                       (+40,196 during one offloaded download on the 504).
+#
+# The drop counters the upstream reference reads at +0x1a0/+0x1a4 are NOT
+# drop counters on this silicon: on the ZN504XG-D +0x1a4 and the unnamed
+# +0x1a8 both read a constant 24 which never moves while traffic flows, and
+# +0x1a4 is 0 on CDM2 while being 24 on CDM1. Reporting them would draw a
+# permanent red "HWF drop: 24" on a healthy board, so they are not emitted at
+# all rather than guessed at.
+REG_CDM_TX_OK=0x180
+REG_CDM_RXCPU_OK=0x190
+REG_CDM_RXHWF_OK=0x194
+
+CDM1_BLOCK=0x1fb50400                  # CDM1_BASE(0x400)  + FE_BASE
+CDM2_BLOCK=0x1fb51400                  # CDM2_BASE(0x1400) + FE_BASE
+
 # Read a 32-bit FE register through devmem, return decimal.
 fe_rd() {
 	local v
 	v=$(devmem "$1" 32 2>/dev/null)
 	echo $(( ${v:-0} ))
+}
+
+# Read one CDM MIB counter. $1 = CDM block base, $2 = register offset.
+cdm_rd() {
+	fe_rd "$(printf '0x%08x' "$(( $1 + $2 ))")"
+}
+
+# The three counters of one CPU DMA engine as a JSON object.
+# $1 = devmem_ok, $2 = CDM block base. Without /dev/mem every counter is
+# reported as 0 and the caller marks the card unavailable rather than
+# printing zeros that look like measurements.
+cdm_json() {
+	local ok="$1" base="$2"
+	local tx=0 rxcpu=0 rxhwf=0
+
+	if [ "$ok" = "1" ]; then
+		tx=$(cdm_rd "$base" "$REG_CDM_TX_OK")
+		rxcpu=$(cdm_rd "$base" "$REG_CDM_RXCPU_OK")
+		rxhwf=$(cdm_rd "$base" "$REG_CDM_RXHWF_OK")
+	fi
+
+	printf '{"tx":%d,"rx_cpu":%d,"rx_hwf":%d}' "$tx" "$rxcpu" "$rxhwf"
 }
 
 # ---------------------------------------------------------------------------
@@ -1019,7 +1077,17 @@ get_frame_engine() {
 	printf '"gdm1":%s,' "$(gdm_json "$gdm1_dev")"
 	printf '"gdm2":%s,' "$(gdm_json "$gdm2_dev")"
 	printf '"gdm_copper":%s,' "$(gdm_copper_json "$gdm_copper_idx" "$gdm_copper_dev")"
-	printf '"gdm4":%s}' "$(gdm_json "$gdm4_dev")"
+	printf '"gdm4":%s,' "$(gdm_json "$gdm4_dev")"
+
+	# === CDM counters (the two CPU DMA engines) ===
+	# P0 (CDM1) and P5 (CDM2) are the CPU's own DMA ports: RXCPU_OK counts the
+	# frames the CPU had to process in software, RXHWF_OK the frames the PPE
+	# forwarded in hardware. Their ratio is the offload share the diagram
+	# draws, so both are read even when only one of them is non-zero. These
+	# are register reads, not netdev statistics: the CDM counters have no
+	# netdev behind them (see the CDM note at the top of this file).
+	printf '"cdm1":%s,' "$(cdm_json "$devmem_ok" "$CDM1_BLOCK")"
+	printf '"cdm2":%s}' "$(cdm_json "$devmem_ok" "$CDM2_BLOCK")"
 }
 
 case "$1" in
