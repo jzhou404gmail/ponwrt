@@ -47,3 +47,4 @@ git-src
 
 # 与固件无关的本机运维脚本
 /clone-sda/
+/shutdown-analyze.sh
