@@ -25,7 +25,7 @@
 | 3 | `airoha/an7581` | **面板 LAN 灯触发器缺失**（ZN504XG-D / ZN515XG-D / Nokia MD & TF / UNG00A） | 硬件修复 |
 | 4 | `airoha/an7581` | **UNG00A 面板口序反转** + 启用 PHY1 LED0 | 硬件修复 |
 | 5 | `airoha/an7583` | XG-040G-MF 的 PHY LED 补 `function` / `function-enumerator` | 一致性 |
-| 6 | `airoha/an7581` | **HG5585F-CU 四个 LAN 灯全灭**（PHY LED0 pinctrl 未选中） | 硬件修复 |
+| 6 | `airoha/an7581` | HG5585F-CU 四个 LAN 灯全灭 —— **已改为随上游 `91077e9a6b` 合并**，本 fork 只留一段防回归注释 | 已并入上游 |
 | 7 | `airoha/an7581` | **HG5585F-CT 热重启后 lan1 NO-CARRIER**（GPY211C PHY ID 竞态） | 硬件修复 |
 | 8 | `luci-app-airoha-npu` | NPU/Frame Engine 面板移植，**WAN = PON 口** | 新功能 |
 | 9 | `base-files` | **IPTV 机顶盒报 2001** 的组播 VLAN MAC 学习修复 | 功能修复 |
@@ -128,26 +128,31 @@ netdev 拿到 carrier"的方式实测到的真实映射：
 
 ### 2.3 HG5585F-CU 四个 LAN 灯全灭 `[实测]`
 
-每个面板 LAN 灯挂在**它自己那个口的 PHY LED0 输出**上，而 AN7581 pinctrl
-只有在 `an7581_phy_probe()` 里选中 `"gbe-led"` pinctrl 状态时才真正驱出这个输出。
-本机型没选，所以 LED 输出一直被 mux 掉，PHY 做什么都到不了面板。
+**现象**：CU 面板上四个 LAN 灯全灭，但四个口 link 正常。
 
-并行 NAND 占了 GPIO4-7 与 GPIO30-42，这块板还能给 PHY LED0 用的只剩 **GPIO43-46**。
+**根因**：面板灯挂在 **GPIO43-46**（低有效）上 —— 并行 NAND 占了 GPIO4-7 与 GPIO30-42，
+这块板剩下的可用脚就是 GPIO43-46。而早期这块板的设备树里**根本没有这四个 LED 节点**，
+没有任何东西去驱动它们，所以灯一直是灭的。
 
-GPIO43-46 能当 PHY LED0 用，靠的是本仓库已带的内核补丁
-`203-09-pinctrl-airoha-permit-GPIO43-46-for-PHY-LED0.patch`
-（上游维护者 Christian Marangi，理由就是"某些板子上 GPIO43-46 也被用于 PHY LED0"）——
-它把这 4 个脚加进了 `phy1_led0` .. `phy4_led0` 的函数分组。**没有这个补丁，
-`function = "phy1_led0"; pins = "gpio43"` 会被 `airoha_pinmux_set_mux()` 按名字匹配失败而
-返回 `-EINVAL`，pinctrl 状态选择直接失败、mux 根本不会写下去。**
+**修复（上游 `91077e9a6b`，作者在真机 CU 上逐脚驱动 GPIO 验证过）**：在
+`an7581-fiberhome-hg5585f-common.dtsi` 里把 GPIO43-46 描述成 4 个普通 `gpio-leds`
+（`blue:lan-1` .. `blue:lan-4`），并在 `board.d/01_leds` 的 `fiberhome,hg5585f-cu`
+case 里给它们绑 netdev 触发。
 
-**修复**：`an7581-fiberhome-hg5585f-cu-common.dtsi` 描述这 4 个 pinctrl 组，
-从 `gsw_phy1..4` 选中它们，并给对应 LED 类设备标上 `green` / `lan` + 对应枚举号。
-
-> ⚠️ **这一处还有一半没做**：`01_leds` 里**没有 fiberhome 的 case**，所以这四个
-> LED 类设备目前没有 netdev 触发绑定。按 §2.1 的同一套机制（LED core 注册时清规则），
-> 只把 PHY LED0 mux 出来、不绑触发，**灯仍可能不亮**。上机时请一并确认 §6.2 的对应行；
-> 若确认不亮，照 §2.1 的热修命令给 `lan1..lan4` 各补一条 UCI 即可（`sysfs` 填实际类设备名）。
+> 📌 **本 fork 曾走另一条路，现已撤掉**：用内核补丁
+> `203-09-pinctrl-airoha-permit-GPIO43-46-for-PHY-LED0.patch` 把 GPIO43-46 mux 成
+> `phy1_led0` .. `phy4_led0`，让 PHY 硬件直接驱动面板灯，并启用
+> `gsw_phy1_led0` .. `gsw_phy4_led0` 类设备。
+>
+> 撤掉的原因有两条：① 一个 pad 只能归 GPIO 或 PHY LED 输出**其中之一**，两套写法同时
+> 存在会互相抢脚（`gbe-led` pinctrl 会把 4 个脚从 gpio-leds 手里拿走）；② 当时这条路线
+> 只有一半 —— `01_leds` 里没有 fiberhome 的 case、没有 netdev 触发绑定，灯很可能仍然不亮。
+> 上游的方案与 `01_leds` 是配套的，所以合并后采用上游写法。
+> `an7581-fiberhome-hg5585f-cu-common.dtsi` 里留了一段注释写明"不要再把 GPIO43-46
+> mux 成 phyN_led0"，以免以后重复踩。
+>
+> 那条内核补丁**必须保留**：UNG00A（§2.2）的 `gswp1_led0_pins` 仍然要拿 gpio43
+> 当 `phy1_led0` 用。
 
 ### 2.4 HG5585F-CT：热重启后 lan1 一直 NO-CARRIER `[实测]`
 
@@ -439,7 +444,7 @@ dmesg | grep -i "NPU fw version"
 |---|---|---|
 | 2.5G 口 LED | ZN504XG-D / ZN515XG-D / Nokia MD & TF / UNG00A | `cat /sys/class/leds/mt7530-0:0f:green:lan-1/trigger` → `[netdev]`；插 2.5G 网线看灯 |
 | 面板口序 | UNG00A | 四根线分别插 LAN1..4，`ip -br link` 看 carrier 是否落在 lan1..4（**不是**按 port 顺序） |
-| 四个 LAN 灯 | HG5585F-CU | ① `dmesg \| grep -iE 'pinctrl\|gbe-led\|phy?_led'` 不应有 `-EINVAL` / "not supported" 之类报错；② `ls /sys/class/leds/` 应出现 4 个 `mt7530-0:*:green:lan-*`；③ **逐口插线看灯** —— 若类设备在但灯不亮，就是缺 netdev 触发绑定（见 §2.3 的警告），按 §2.1 热修命令补 UCI |
+| 四个 LAN 灯 | HG5585F-CU | ① `ls /sys/class/leds/` 应出现 4 个 `blue:lan-*`（**不是** `mt7530-0:*:green:lan-*`，那是已撤掉的 PHY LED0 方案）；② `dmesg \| grep -iE 'pinctrl\|gbe-led'` 不应有 `-EINVAL` / "not supported" 报错；③ **逐口插线看灯**；④ `dmesg \| grep -i 'leds-gpio'` 不应报无法申请 GPIO43-46 |
 | lan1 冷启动一致性 | HG5585F-CT | `reboot`（热重启）后立刻 `cat /sys/class/net/lan1/carrier`，应看到 `1`；`dmesg \| grep -i "GPY211\|Clause 45"` 不应出现 Generic Clause 45 PHY |
 | 5G 默认 160MHz / 国家码 CN | HG5585F-CT / HG5585F-CU | `jsonfilter -i /etc/board.json -e '@.wlan.defaults'` 应见 `{"country":"CN","widths":{"5g":"160"}}`；`uci show wireless \| grep -E "country\|htmode"` 应见 `country='CN'` 与 `htmode='HE160'`；`iw dev phy1-ap0 info \| grep width` 应见 `width: 160 MHz` |
 | IPTV 组播 | 任意 | §4 的两条命令 |
@@ -478,7 +483,7 @@ cp docs/luci-app-airoha-npu-port/01_leds.before \
 | # | 项目 | 状态 |
 |---|---|---|
 | 1 | §2.5 的 XG-040G-MF LED 命名补全 | 标 `[补全]`，未单独上机验证（只影响类设备命名，风险低） |
-| 2 | §2.3 的 HG5585F-CU 四个 LAN 灯 | **只做了一半**：PHY LED0 输出被 mux 出来，但 `01_leds` 里还没有 fiberhome 的 case，即没有 netdev 触发绑定。按 §2.1 的机制这很可能导致灯仍不亮 —— 必须上机按 §6.2 确认 |
+| 2 | §2.3 的 HG5585F-CU 四个 LAN 灯 | 已改用上游 `91077e9a6b` 的方案（GPIO43-46 gpio-leds + `01_leds` netdev 触发），该方案由上游作者在真机 CU 上验证。本 fork 原先的 PHY LED0 mux 路线已撤销；仍需按 §6.2 上机确认灯确实亮 |
 | 3 | §2.4 的 HG5585F-CT GPY211C | 结论基于复位时序竞态分析，需在真机上做一次热重启核对 |
 | 4 | 机型覆盖 | 修复的根因取证与刷机回归以 **ZN504XG-D** 为主力机型（UNG00A 的口序结论有换线实测记录）。其余 11 个机型已一起编译出固件，但未逐个上机验证，按 §6.2 自检即可 |
 
