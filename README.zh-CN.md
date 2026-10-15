@@ -31,6 +31,7 @@
 | 9 | `base-files` | **IPTV 机顶盒报 2001** 的组播 VLAN MAC 学习修复 | 功能修复 |
 | 10 | `docs` | NPU 移植说明、IPTV 组播指南、PON 掉线采样脚本、渲染回归测试 | 文档 |
 | 11 | `feeds.conf.default` | 注释形式记录可选的 PassWall feed | 说明 |
+| 12 | `airoha/an7581` | **5G 默认 160MHz + 国家码 CN**（世界监管域里没有能起 AP 的 160MHz 段） | 默认值修复 |
 
 ---
 
@@ -170,12 +171,81 @@ PHY 那一刻可能还被按在复位里，ID 扫描读到 `0xffffffff`，内核
 **修复**：给 phy2/3/4 补上显式的 `lan` function 与枚举号 2/3/4，命名变成确定的，
 netdev 触发器可以按名字精确落到对应的口。
 
+### 2.6 5G 选 160MHz 后"无线消失"：世界监管域里没有 160MHz 段 `[实测]`
+
+**机型**：`fiberhome_hg5585f-ct`、`fiberhome_hg5585f-cu`（MT7916D）
+
+**现象**：5G 带宽选 160MHz、国家码留在默认（空 / 驱动默认）时，5G 无线整块消失、AP 起不来；
+把国家码手动选成 CN 或 US 就一切正常。
+
+**这不是代码 bug，是监管域（regulatory domain）问题**。生成的 `/etc/config/wireless` 里
+`country=''`，而 wifi 脚本只在 `country_code` 非空时才 `iw reg set`（UCI 的 `country` 经
+schema 别名转成 `country_code` 后判空），hostapd 同样拿不到国家码。于是内核停在
+**世界域 `country 00`**：
+
+```
+country 00:
+	(5170 - 5250 @ 80), (20), AUTO-BW        # 只有这一段允许起 AP，宽度就 80MHz
+	(5250 - 5330 @ 80), (20), NO-IR, DFS     # DFS 段
+	(5490 - 5730 @ 160), (20), NO-IR, DFS    # 唯一 160MHz 宽的一段，也是 DFS 段
+	(5735 - 5835 @ 80), (20), NO-IR
+```
+
+160MHz 需要一整段连续可用的 160MHz（ch36–64 或 ch100–128）：36–64 在世界域里只有 80MHz 宽；
+100–128 属 DFS 段，而没设国家码时 hostapd 配置里不会有 `ieee80211h`（`device_country_code()`
+在 `country_code` 为空时提前返回），wiphy 的 DFS region 也是 `UNSET`，cfg80211 直接拒绝起 AP。
+hostapd 启动失败 → netifd 重试 3 次后放弃 → LuCI 里连这个 radio 都看不到。
+**80MHz 之所以没事**，正是因为 ch36–48 那一块本身允许起 AP。
+
+CN / US 能行是 **ImmortalWrt 的 `wireless-regdb` 补丁**
+（`600-custom-change-txpower-and-dfs.patch`，**不是本 fork 加的**）把这两个国家的 5GHz
+改成了无 DFS / 无 NO-IR 的整段 160MHz：
+
+```
+country CN: DFS-FCC
+	(5150 - 5350 @ 160), (30)      # ch36-64 一整块 160MHz，不带 DFS
+	(5725 - 5850 @ 80), (33)
+```
+
+**修复（源码级默认值）**：新增
+`target/linux/airoha/an7581/base-files/etc/board.d/03_wireless`，给这两个机型写死
+
+```sh
+ucidef_set_country CN             # -> board.json: wlan.defaults.country = "CN"
+ucidef_set_wireless_width 5g 160  # -> board.json: wlan.defaults.widths.5g = 160
+```
+
+- `ucidef_set_country` 是上游函数（`package/base-files/files/lib/functions/uci-defaults.sh`），
+  `/lib/wifi/mac80211.uc` 生成配置时把它写进每个 radio 的 `country`，之后 `iw reg set CN`
+  和 hostapd 的 `country_code=CN` 都会生效（2.4G 也一起拿到 CN，该国 2.4G 限值更宽）。
+- `ucidef_set_wireless_width` 是本 fork 新加的 helper（同一文件），落到
+  `wlan.defaults.widths.<band>`。`mac80211.uc` 原来把非 2.4G 的默认宽度**一律压到 80MHz**，
+  现在改为"板级声明优先（再按 phy 的 `max_width` 截断），没声明仍是 80MHz" ——
+  其它机型（含 6GHz 机型）的生成结果**逐字节不变**。
+- 其它无线机型（如 `znxt,zn515xg-d`）想要同样默认值，在同一个 `case` 里加两行即可。
+
+**上机自检**：
+
+```sh
+jsonfilter -i /etc/board.json -e '@.wlan.defaults'    # {"country":"CN","widths":{"5g":"160"}}
+uci show wireless | grep -E "country|htmode"          # country='CN'  htmode='HE160'
+iw reg get | head -2                                  # country CN
+iw dev phy1-ap0 info | grep -E "channel|width"        # width: 160 MHz
+```
+
+> `/etc/board.json` 只在**首次启动**（该文件不存在时）由 `/etc/board.d/*` 生成。
+> 从旧固件保留配置升上来的机器不会自动套用新默认值：要么 `rm /etc/board.json` 后重启
+> 重新生成，要么直接在 LuCI 里把国家码选 CN、带宽选 160MHz。
+>
+> 生成逻辑已用宿主 `ucode` 做过回归（板级声明 160 → `HE160`；不声明 → 仍 `HE80`；
+> phy `max_width=80` 时按 80 截断），但**默认值改动本身还没上机**，按 §6.2 验一行即可。
+
 ---
 
 ## 3. LuCI NPU 面板（`luci-app-airoha-npu`）
 
 移植自 [rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)
-v1.1.4（本 fork 内版本 `1.2.0-r2`），把 **WAN = 2.5G 铜口**改成 **WAN = PON 口**。
+v1.1.4（本 fork 内版本 `1.2.0-r3`），把 **WAN = 2.5G 铜口**改成 **WAN = PON 口**。
 
 上游假设 WAN 是 GDM4 上的 2.5G PHY（netdev `wan`）、GDM2 的 PON 数据面在 DTS 里是关的，
 所以把 GDM2 卡片写死成"未启用"。PonWrt 上角色正好反过来：
@@ -197,12 +267,19 @@ v1.1.4（本 fork 内版本 `1.2.0-r2`），把 **WAN = 2.5G 铜口**改成 **WA
 - **GDM4 不是 2.5G**（Gemtek XG2010G 是 10G RTL8261N）：速率标签改为从 DTB `phy-mode`
   动态取（`2500base-x`→2.5G、`10gbase-r/usxgmii`→10G、`internal`→switch）。
 
-**WiFi 区块是重写的，不是照搬上游**：上游读的 `token_info` debugfs 只由 mt7996 的 NPU
-代码创建（MT7916 上不存在），匹配的 `phy0.<band>-` 也是 mt7996 单 phy 多频段的命名
-（MT7916D 是两个 PCIe HIF ⇒ `phy0-ap0` / `phy1-ap0`，上游正则一个都匹配不上）。
+**WiFi 内容画在 CDM4 卡片里，且数据源是重写的，不是照搬上游**：上游读的 `token_info` debugfs
+只由 mt7996 的 NPU 代码创建（MT7916 上不存在），匹配的 `phy0.<band>-` 也是 mt7996 单 phy
+多频段的命名（MT7916D 是两个 PCIe HIF ⇒ `phy0-ap0` / `phy1-ap0`，上游正则一个都匹配不上）。
 现在只用芯片真机上确实存在的数据源：`iw dev info` / `station dump` / `survey dump` /
 hwmon 温度。信道占用按两次 survey 采样的**差值**算当前值（累加值直接相除得到的是开机
-至今均值）；**取不到的数据一律不画那一行**，不甩假 0。
+至今均值）；**取不到的数据一律不画那一行**，不甩假 0。频段只画 2.4G / 5G 两张。
+
+**CDM 卡片行**：Frame Engine 区块新增 `CDM1 (P0)` / `CDM2 (P5)` 两张 CPU DMA 引擎卡片，
+**所有机型都画**（与有没有无线无关），显示 `HW Offload = RXHWF_OK / (RXCPU_OK + RXHWF_OK)`
+卸载率条与 `CPU / HWF / TX` 计数；无线机型在下面再画 `CDM4 (P7 WiFi DMA)` 卡片，
+里面就是那两个频段的详细卡片。CDM 计数器直接读寄存器（`CDM_BASE(0x400/0x1400) + 0x180`
+起的 `TX_OK` / `RXCPU_OK` / `RXHWF_OK` / 两个 drop）—— 这几个计数器内核驱动**从来不读**
+（只碰 CDM 的配置寄存器），所以用户态读它们不像 GDM MIB 那样会偷走内核的计数。
 
 **后端**：
 
@@ -313,7 +390,7 @@ bin/targets/airoha/an7581/ponwrt-airoha-an7581-<机型>-initramfs-recovery.itb  
 ```
 
 `bin/targets/airoha/an7581/ponwrt-airoha-an7581.manifest` 里应能看到
-`luci-app-airoha-npu - 1.2.0-r2`。
+`luci-app-airoha-npu - 1.2.0-r3`。
 
 支持并已一起编译的 12 个 AN7581 机型：
 
@@ -345,7 +422,7 @@ AN7583 目标（`nokia_xg-040g-mf`、`nokia_xg-040g-mf-ubi`）用 `configs/an758
 
 ```sh
 cat /etc/openwrt_release                      # 看 DISTRIB_REVISION
-apk list -I | grep airoha-npu                 # 应见 luci-app-airoha-npu-1.2.0-r2
+apk list -I | grep airoha-npu                 # 应见 luci-app-airoha-npu-1.2.0-r3
 
 for d in /sys/class/net/*; do
   echo "$(basename $d) -> $(basename $(readlink -f $d/of_node))"
@@ -364,6 +441,7 @@ dmesg | grep -i "NPU fw version"
 | 面板口序 | UNG00A | 四根线分别插 LAN1..4，`ip -br link` 看 carrier 是否落在 lan1..4（**不是**按 port 顺序） |
 | 四个 LAN 灯 | HG5585F-CU | ① `dmesg \| grep -iE 'pinctrl\|gbe-led\|phy?_led'` 不应有 `-EINVAL` / "not supported" 之类报错；② `ls /sys/class/leds/` 应出现 4 个 `mt7530-0:*:green:lan-*`；③ **逐口插线看灯** —— 若类设备在但灯不亮，就是缺 netdev 触发绑定（见 §2.3 的警告），按 §2.1 热修命令补 UCI |
 | lan1 冷启动一致性 | HG5585F-CT | `reboot`（热重启）后立刻 `cat /sys/class/net/lan1/carrier`，应看到 `1`；`dmesg \| grep -i "GPY211\|Clause 45"` 不应出现 Generic Clause 45 PHY |
+| 5G 默认 160MHz / 国家码 CN | HG5585F-CT / HG5585F-CU | `jsonfilter -i /etc/board.json -e '@.wlan.defaults'` 应见 `{"country":"CN","widths":{"5g":"160"}}`；`uci show wireless \| grep -E "country\|htmode"` 应见 `country='CN'` 与 `htmode='HE160'`；`iw dev phy1-ap0 info \| grep width` 应见 `width: 160 MHz` |
 | IPTV 组播 | 任意 | §4 的两条命令 |
 
 > LuCI 的 JS 带 `?v=` 版本号，而那个版本号来自 luci-base 不是本包，**刷完请硬刷新浏览器
@@ -417,6 +495,10 @@ HG5585F 这类机型上 WiFi 的实际通路是
 MT7916 数据源重写。`docs/luci-app-airoha-npu-port/upstream/` 里保留了上游原始文件，
 方便对比。
 
+同理，**5G 能跑 160MHz 这件事本身来自 ImmortalWrt 的 `wireless-regdb` 补丁**
+（CN / US 的 5GHz 被改成整段 160MHz 且不带 DFS），本 fork 只负责把"默认用哪个国家码、
+默认多宽"落到板级默认值里（见 §2.6）。
+
 ### 8.3 与上游后续提交的关系
 
 上游 `c3b518baec..04986da1e6` 的 5 个提交里有三处和本 fork 的改动**同区域**：
@@ -450,10 +532,16 @@ grep -n 'gpio4[3-6]' \
 
 ```
 build.sh / build-watch.sh / build-live.sh     编译入口与两种进度观察
-package/luci-app-airoha-npu/                  NPU/Frame Engine 面板（1.2.0-r2）
+package/luci-app-airoha-npu/                  NPU/Frame Engine 面板（1.2.0-r3）
 target/linux/airoha/patches-6.18/
     950-npu-expose-fw-version-sysfs.patch     NPU 版本/核数 sysfs
 package/base-files/files/                     IPTV 组播 MAC 学习修复（4 个触发点）
+package/base-files/files/lib/functions/
+    uci-defaults.sh                           + ucidef_set_wireless_width()
+package/network/config/wifi-scripts/files/lib/wifi/
+    mac80211.uc                               默认带宽支持板级 widths 声明
+target/linux/airoha/an7581/base-files/etc/board.d/
+    03_wireless                               HG5585F-CT/CU：默认国家码 CN、5G 160MHz
 docs/luci-app-airoha-npu-port/README.md       移植全过程、根因取证、逐机型核对
 docs/iptv-udpxy-omcproxy-guide.md             udpxy + omcproxy 完整指南（已脱敏）
 docs/pon-link-watch.sh                        PON 光功率/温度/注册计数器定时光采样

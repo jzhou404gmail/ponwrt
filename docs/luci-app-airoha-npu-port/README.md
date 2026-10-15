@@ -90,12 +90,17 @@ n7581-znxt-zn515xg-d                GDM1->eth0  GDM2->pon0[WAN]  GDM4->lan1
 - **GDM2 卡片** = 活跃的 PON/WAN 卡：TX/RX、丢包、链路状态（`carrier`，由
   `airoha-xpon` 随 ONU 注册/US-GEM 状态驱动）、解析到的网口名。
 - **GDM4 卡片** = Copper PHY（LAN），带动态速率标签。
-- **PSE 端口网格**：`P2`→GDM2(PON/WAN)、`P9`→Copper PHY；丢包统计由 P1/P9 扩到 **P1/P2/P9**。
+- **PSE 端口网格**：`P2`→GDM2(PON/WAN)、`P9`→Copper PHY；丢包统计由 P1/P9 扩到 **P1/P2/P9**；
+  `P7`（CDM4）从网格移除，改由 CDM4 卡片负责。
+- **CDM 卡片行**：`CDM1 (P0)` / `CDM2 (P5)` 两台 CPU DMA 引擎**所有机型都画**，
+  显示硬件卸载率与 CPU/HWF/TX 计数；`CDM4 (P7 WiFi DMA)` 只在无线机型出现（详见 9.8）。
 - **`/usr/bin/ppe-verify`**：WAN 口动态解析；顺带修了两个上游 bug
   （`${var^^}` 是 bash 语法、会让 busybox ash 直接退出；`grep -c ... || echo 0`
   在空表时会输出 `0\n0`）。
-- **WiFi 区块**（仅无线机型渲染）：MT7916 真实数据（信道占用/噪声/客户端/流量/芯片温度），
+- **WiFi 区块**：不再是独立区块，改为画在 CDM4 卡片里（仅无线机型渲染），
+  只保留 2.4G/5G 两张频段卡；数据仍是 MT7916 真机数据（信道占用/噪声/客户端/流量/芯片温度），
   详见第九节。
+- **8x RISC-V NPU 状态**、PPE 流表、CPU 调频/超频不变。
 - 新增简体中文翻译（`po/zh_Hans`），西语翻译同步刷新。
 
 ## 六、编译前必读：git 的坑
@@ -281,13 +286,18 @@ znxt case ⇒ 没有 UCI ⇒ 没有触发 ⇒ 规则永远是 0 ⇒ **灯永远�
 5855F 上的实际通路：**MT7916D → PCIe（`14c3:7906` 主 HIF 在 PCIe1，PCIe0 提供 HIF2）→ GDM3 (PSE P3) → PPE**。
 路由/NAT 流量**仍然被 PPE 硬件卸载**，只是没有 NPU 那一层。NPU 在该机型上只加速以太网/PON 侧。
 
-### 9.2 上游的 WiFi 界面为什么不能照搬
+### 9.2 上游的 WiFi 界面哪里不能照搬
 
 上游 `status.js` 把 3 个频段 chip 塞进 `CDM4 / WDMA`（「P7 WiFi DMA」）卡片，徽标取自 `token_info` 的 `npu`/`dma`。三个问题：
 
 1. `token_info` 这个 debugfs **只由 mt7996 的 NPU 代码创建** —— MT7916 上根本不存在（真机实测 `No such file or directory`）；
-2. `CDM4/WDMA` 不是 MT7916 的通路（WiFi 走 PCIe/GDM3），参考的 v1.1.4 正是因此删掉了这张卡；
-3. 上游用 `/Interface phy0\.<band>-/` 匹配接口名 —— 那是 **mt7996 单 phy 多频段**（`phy0.0-apN`）的命名；**MT7916D 是两个 PCIe HIF → 两个 phy**，真机命名为 `phy0-ap0`(2.4G) / `phy1-ap0`(5G)，且每个 wiphy 的 band 编号从 1/2 起 ⇒ 上游正则**一个都匹配不上**，所有频段都会显示 0 客户端。
+2. 上游用 `/Interface phy0\.<band>-/` 匹配接口名 —— 那是 **mt7996 单 phy 多频段**（`phy0.0-apN`）的命名；**MT7916D 是两个 PCIe HIF → 两个 phy**，真机命名为 `phy0-ap0`(2.4G) / `phy1-ap0`(5G)，且每个 wiphy 的 band 编号从 1/2 起 ⇒ 上游正则**一个都匹配不上**，所有频段都会显示 0 客户端；
+3. 上游的「健康度」只有 `Good/Fair/Poor` 三档且取自 `token_info` 的重传计数 —— MT7916 上同样没有数据源。
+
+**结论不是「不画 CDM4 卡片」，而是「卡片要画，里面的数据必须换掉」**：本稿恢复 `CDM4 / P7 WiFi DMA`
+卡片（见 9.8），但卡片里的每一个数字都来自 MT7916 真机上确实存在的数据源（9.3 的表格），
+并且卡片上写明该机型的真实通路。上游那张卡之所以看起来「不属于这个机型」，
+问题出在数据来源，不在于卡片位置。
 
 ### 9.3 采集：只用 MT7916 真机上真实存在的数据源
 
@@ -309,20 +319,32 @@ znxt case ⇒ 没有 UCI ⇒ 没有触发 ⇒ 规则永远是 0 ⇒ **灯永远�
 评估后**没有采纳**的数据：`mt76/tx_stats` 的 MCS 直方图（太细）、`aql_pending`、
 `xmit-queues` 队列深度（常年为 0，且与卡片上已有数字重复）。
 
-### 9.4 显示：与 GDM 卡片同风格，且「没数据 / 重复」的一律不画
+### 9.4 显示：WiFi 内容画在 CDM4 卡片里，且「没数据 / 重复」的一律不画
 
-- **标题栏**：`WiFi` + 芯片温度徽标。两个 phy 的温度来自同一颗 MT7916 die（实测都是 52 °C），
-  所以温度**只在标题出现一次**，不在每张频段卡上重复；副标题为
-  `mt7915e · 无 NPU 卸载路径 · WiFi → PCIe → GDM3 (P3) → PPE`。
+WiFi 不再是独立区块，而是 Frame Engine 里 CDM4 卡片（`CDM4 / P7 WiFi DMA`）的内容，
+和 GDM 卡片一样随 `#fe-container` 每 5 秒刷新：
+
+- **卡片头**：`CDM4` + 右侧徽标列（芯片温度徽标 + `P7 WiFi DMA`）。两个 phy 的温度来自
+  同一颗 MT7916 die（实测都是 52 °C），所以温度**只出现一次**，不在每张频段卡上重复。
+- **副标题（通路说明）**：`mt7915e · 无 NPU 卸载路径 · WiFi → PCIe → GDM3 (P3) → PPE`；
+  mt7996 机型（真走 NPU/WDMA）显示 `NPU offload active · WiFi → NPU → WDMA → PPE`。
+  卡片的**名字**跟着硬件（CDM4=PSE P7 的 DMA 口），**通路**跟着机型，两者不混。
+- **IQ/OQ 行**：P7 的瞬时队列占用，只在 `/dev/mem` 可读时画；读不到就整行不画，
+  不报一对看起来像测量值的 0。
 - **每个频段一张卡**（沿用 GDM 卡的视觉语言：左侧色条、彩色标题、右侧接口名徽标、键值网格）：
   - 始终显示：`SSID`、`信道 x @ y MHz`、`客户端数`
   - 有客户端才显示：`信号（最弱客户端）`（≥−60 绿 / ≥−70 橙 / 否则红）、
     `流量`（↓ 下行发给客户端 / ↑ 上行收自客户端，鼠标悬停有说明）、
     `重传率`（重传/发包，>10% 橙、>25% 红）、`发送失败`（非 0 才显示）
   - 读到 survey 才显示：`信道占用`（<30% 绿 / <60% 橙 / 否则红）、`噪声`
-  - 频段被关闭 ⇒ 既无信道也无客户端 ⇒ **整张卡不渲染**；机型没有无线 ⇒ **整个区块不渲染**
+  - 频段被关闭 ⇒ 既无信道也无客户端 ⇒ **整张卡不渲染**；机型没有无线 ⇒ **整张 CDM4 卡不渲染**
   - 同一频段上有第二个 AP（多 SSID）⇒ 折叠进同一张卡（否则同一个射频会出现两张一样的卡）
-- **PSE 网格 P3**：有 WiFi 时标签变成 `PCIe (WiFi)`，无 WiFi 时仍是 `GDM3`。
+  - 全部射频都关掉 ⇒ 卡片保留并显示 `No radio is up`（板子确实有无线硬件）
+- **只画 2.4G / 5G**：本页支持的所有机型都是 MT7916D（只有这两个射频），
+  所以不再生成 6 GHz 卡片。RPC 仍会把 ≥5925 MHz 归到 band 2，视图直接不画它
+  （而不是画一张空卡）——见 9.8。
+- **PSE 网格 P7**：从网格里去掉，由 CDM4 卡片负责，避免同一个队列出现两次；
+  **PSE 网格 P3**：有 WiFi 时标签变成 `PCIe (WiFi)`，无 WiFi 时仍是 `GDM3`。
 
 为什么客户端数为 0 时看不到流量行：流量取自 **station 表**，不是网卡的 `statistics`。
 网卡 `tx_bytes` 含 beacon，空口闲着也会一直涨（实测 33 KB 全是 beacon）；station 表只统计
@@ -359,8 +381,9 @@ mac80211 的 survey 计数器是累加值（`channel active/busy time` 从接口
            "ssid":"ImmortalWrt","count":0,"signal_dbm":null,"busy_pct":41,"noise_dbm":-91}]}
 ```
 
-渲染回归测试共 7 个场景（真机无客户端 / 3 个客户端 / 5G 关闭 / 无无线的机型 /
-survey 与温度都读不到 / 同频段多 SSID / **一次真机抓包**：手机连到 5G，
+渲染回归测试共 10 个场景（真机无客户端 / 无 `/dev/mem` 时不画 IQ/OQ / 出现 6 GHz 射频时不画 /
+3 个客户端 / 5G 关闭 / 无无线的机型 / survey 与温度都读不到 / 同频段多 SSID /
+全部射频关闭 / **一次真机抓包**：手机连到 5G，
 `rx 82702 / tx 22616 / tx packets 229 / retries 2 / failed 2 / signal -33`，
 已核对解析与 RPC 输出逐项一致），脚本在 `tests/smoke_wifi.js`：
 
@@ -369,9 +392,136 @@ cd package/luci-app-airoha-npu
 node ../../docs/luci-app-airoha-npu-port/tests/smoke_wifi.js
 ```
 
-ZN504XG-D 上 `/sys/class/ieee80211` 为空（该机型无无线模块），实测 WiFi 区块整体不渲染。
+ZN504XG-D 上 `/sys/class/ieee80211` 为空（该机型无无线模块），实测 **CDM4 卡片整体不渲染**，
+CDM1/CDM2 两张卡照常显示。
 
-## 十、编译刷机固件 + 各机型影响核对（本稿：1.2.0-r2）
+## 9.8 CDM 卡片：CDM1 P0 / CDM2 P5（所有机型）+ CDM4 P7 WiFi DMA（无线机型）
+
+### 9.8.1 布局
+
+Frame Engine 区块现在是四行：
+
+| 行 | 内容 | 出现条件 |
+|---|---|---|
+| 1 | PSE Shared Buffer 条 | 始终（无 `/dev/mem` 时灰掉） |
+| 2 | GDM 卡：GDM1 / GDM2 / 铜口那张 | 解析到 netdev 的端口 |
+| 3 | **CDM1 (P0) + CDM2 (P5)** | **所有机型**（含 504/5382A/UNG00A/XG-040G 等无无线机型） |
+| 3' | **CDM4 (P7 WiFi DMA)** | 仅后端 `getWifiInfo` 报 `wifi_present=true` 的机型（HG5585F-CT / -CU、ZNT 无线机型） |
+| 4 | PPE Engines + PSE 端口网格（P7 已从网格移除） | 始终 |
+
+CDM1/CDM2 是与无线无关的 SoC 部件（两个 CPU DMA 引擎），所以**无条件渲染**：
+无无线机型不会因为「没有 WiFi」而少掉这两个引擎的卸载率。
+
+### 9.8.2 数据来源与寄存器
+
+`getFrameEngine` 新增 `cdm1` / `cdm2` 两个对象（只有三个计数器，见下）：
+
+```json
+"cdm1":{"tx":27947572,"rx_cpu":459730,"rx_hwf":0}
+```
+
+寄存器按 `airoha_regs.h` 的块基址加偏移算出（`FE_BASE=0x1fb50000`）：
+
+| 计数器 | 偏移 | CDM1 (P0) | CDM2 (P5) | 真机确认 |
+|---|---|---|---|---|
+| `TX_OK` | `CDM_BASE+0x180` | `0x1fb50580` | `0x1fb51580` | ✅ 与同侧 GDM 的 TX 一致（见 9.8.5） |
+| `RXCPU_OK` | `+0x190` | `0x1fb50590` | `0x1fb51590` | ✅ 与同侧 GDM 的 RX 一致 |
+| `RXHWF_OK` | `+0x194` | `0x1fb50594` | `0x1fb51594` | ✅ 有硬件转发时才涨 |
+
+（`CDM1_BASE=0x0400`、`CDM2_BASE=0x1400`，与上游 `luci-app-airoha-npu` 读的绝对地址一致。）
+
+**上游参考里的两个 drop 计数器没有采纳**：上游在 `+0x1a0`/`+0x1a4` 读
+`RXCPU_DROP`/`RXHWF_DROP`，但在真机 ZN504XG-D 上逐寄存器 dump 后发现它们不是丢包计数器 ——
+`+0x1a4` 与上游未命名的 `+0x1a8` 在 CDM1 上**恒为 24、有流量也不动**，而 CDM2 上同为 0；
+并且 `+0x184 + 24 == +0x198` 精确成立，说明 24 是个配置常量而不是丢弃计数。
+照上游读会在一台健康机器上永久画出一行红色的 `HWF drop: 24`（假故障），
+所以这两个字段**干脆不输出**，卡片上也没有丢包行 —— 这与参考截图的 CDM 卡片一致
+（截图里 CDM 卡只有 `HW Offload / CPU / HWF / TX`）。
+
+**为什么这次可以读寄存器、而 GDM 却必须走 netdev 统计**：GDM 的 MIB 是 **read-to-clear**，
+内核驱动会读走并累加到 netdev 统计里，用户态再读一次就是偷计数；
+而 CDM 这几个计数器内核**从来不读**（`airoha_eth.c` 只碰 `REG_CDM_VLAN_CTRL` /
+`REG_CDM_FWD_CFG` / `REG_CDM_CRSN_QSEL` 这些配置寄存器），所以用户态直接读不抢任何东西。
+这一点在真机上验过：连续读 `CDM1 TX_OK` 四次得到 113/114/115/116（累加而非读完清零），
+见 9.8.5。
+
+### 9.8.3 卡片内容与判读
+
+`HW Offload = RXHWF_OK / (RXCPU_OK + RXHWF_OK)`，即「硬件转发、CPU 根本没看见的包」占比。
+下面一行是 `CPU / HWF / TX` 三个计数。读不到数据时（没有 `/dev/mem`，或对着一个还没有
+`cdm1/cdm2` 字段的旧 RPC）卡片照画，但写 `Counters unavailable — no /dev/mem`
+（或 `this RPC reports no CDM counters`），**不打印 0 冒充测量值**；
+整条端口没流量时百分比写 `—` 而不是 `0.0 %`。卡片**没有丢包行**（原因见 9.8.2）。
+
+**这根条不把低卸载率标成故障（红条）**：真机实测（9.8.5）CDM1 的 RXHWF 恒为 0 ——
+PON 没连接时没有任何可卸载的转发流，而**路由器自己终结的流量（SSH、DNS、Web 界面）
+按设计永远不会被硬件卸载**，所以 0 % 是正确的读数而不是故障。寄存器也分不出
+「本机终结」和「转发」两部分流量，因此配色只做「越高越绿」的表达：
+
+| 占比 | 配色 | 含义 |
+|---|---|---|
+| 端口没流量 | 灰 | 没东西可算 |
+| < 50 % | 靛蓝（中性） | 目前的流量基本都由 CPU 处理 |
+| 50–80 % | 浅绿 | 相当一部分已交给硬件 |
+| > 80 % | 绿 | 绝大多数帧 CPU 都没碰 |
+
+**红色只留给真丢包**（GDM 卡上的 `TX Drop`/`RX Drop`）。CDM 卡片不画丢包行，
+因为那两个寄存器没有确认（9.8.2）。
+
+### 9.8.4 顺带修掉的首次渲染 bug
+
+`load()` 原本只并发 3 个 RPC（`getStatus`/`getPpeEntries`/`getFrameEngine`），
+而 `render()` 按 `st, ppe, wf, fe` 四个位置读数据 —— 于是 frame engine 的载荷被塞进了
+WiFi 的位置，`fe` 恒为 `undefined`，**首屏 Frame Engine 区块显示 "Frame Engine data not available"，
+要等 5 秒后第一次轮询才出现**；无线机型的 WiFi/CDM4 同样首屏缺失。
+现在 `load()` 补上 `callWifiInfo()`，顺序与 `render()`、与轮询一致。
+`tests/render_page.js` 直接调用 `render()`，绕过了 `load()`，所以这个 bug 一直没被测出来；
+本次给降级用例加了「空载荷下 CDM1/CDM2 仍必须在」的断言。
+
+### 9.8.5 真机验证（两台机器，2026-10-10）
+
+装了 r3 之后逐项核对，探针脚本 `tests/cdm_regs.sh`（只读，可对任何机型重跑）：
+
+```sh
+scp docs/luci-app-airoha-npu-port/tests/cdm_regs.sh root@<路由器>:/tmp/
+ssh root@<路由器> 'sh /tmp/cdm_regs.sh <对端地址>'   # 带参数则做流量相关性核对
+```
+
+**A. FiberHome HG5585F-CT（192.168.1.1，PON 未连接，MT7916D）**
+
+| 核对项 | 结果 |
+|---|---|
+| 寄存器可用 | CDM1 三个计数器都能读，非全 0 也非全 1 |
+| **不是 read-to-clear** | 连续读 `CDM1 TX_OK` 四次 → 113/114/115/116（累加，不是读完清零） |
+| **TX 语义** | iperf3 上传 5 秒：`cdm1 TX_OK` **+406393**，同时段 `lan1 tx` 也 **+406393** |
+| **RX 语义** | 真下载（host→device）：`cdm1 RXCPU_OK` **+325341**，`lan1 rx` **+325341** |
+| 回归核对 | `tests/cdm_regs.sh` 在 ping 窗口内比较：`cdm1 TX_OK +41` vs `lan1 tx +41` |
+| CDM2 (P5) | PON 未连接 ⇒ 三个计数器全 0，卡片显示 `HW Offload: —` |
+| 端到端 | 从 `http://192.168.1.1/luci-static/...status.js` 取回**实际下发的文件**，配 4 个真机 RPC 载荷跑整页渲染：GDM 3 张 + CDM1/CDM2 + CDM4（39 °C，2.4G/5G，无 6G）+ PSE 10 格，0 根红条 |
+
+（该机 `lan1` 那一侧的流量恰好只有 `lan1` 一个 GDM 在动，`eth0` 空闲，所以数字直接相等；
+504 上两个 GDM 都有流量，见下表。）
+
+**B. ZNXT ZN504XG-D（192.168.32.254，PON WAN 在线、有真实宽带流量、无无线）**
+
+这台是**联网真机**，也是本机（192.168.32.135）的默认网关，所以我自己的下载就是**被转发的流量**，
+正好用来验证 WAN 侧的 CDM2。
+
+| 核对项 | 结果 |
+|---|---|
+| CDM1 TX = LAN 出口之和 | 下载窗口内 `cdm1 tx` **+54793**，同时段 `eth0 tx +38324` 与 `lan1 tx +16469` 之和 = **54793**；另一次 `+51276` vs `51189 + 88 = 51277`；回归核对 `+101277` vs `+101279`（**差 2 包**） |
+| 差异的来源 | 寄存器与 netdev 是**两个时刻**采样的，本机常驻 ~2500 pps 的 IPTV 组播流，毫秒级偏差就是几十包 —— 所以探针按「差值 ≤100 包」判定一致，而不是要求逐包相等 |
+| CDM2 TX/RX 对 WAN | `cdm2 tx` ≈ `pon0 tx`（+9997 vs +9980），`cdm2 rx_cpu` ≈ `pon0 rx`（+54067 vs +54175） |
+| **`RXHWF` 确实是硬件卸载** | 短测试只 +344；**持续下载 60 秒**（PPE 表里该流为 `BND`）时 **+40196**，同窗口 `cdm2 rx_cpu +38882` ⇒ 该窗口卸载率 50.8 %。空闲 20 秒对照只有 **+2** |
+| CDM1 的 `RXHWF` | 恒为 0（LAN 侧的帧没有被硬件转发的）—— 与参考截图里 CDM1 = 0.0 % 的形态一致 |
+| drop 寄存器 | `+0x1a4`/`+0x1a8` 恒为 24 且不随流量变化 ⇒ 判定不是丢包计数器，已不输出（9.8.2） |
+| 端到端 | 从 `http://192.168.32.254:8000/luci-static/...status.js`（该机 uhttpd 监听 8000）取回下发的文件，配真机载荷渲染：3 张 GDM + **CDM1 0.0 %** + **CDM2 3.7 %**（真实值）+ 无 CDM4（该机无无线）+ PSE 10 格，0 根红条 |
+
+**仍然没有验证的部分**：AN7583（XG-040G-MF）没有真机在手，它的 CDM 块基址按同一份
+`airoha_regs.h` 推导（`CDM_BASE(0x400/0x1400)` 与 SoC 型号无关），但**没有实读过**。
+刷到 AN7583 机型上时，先用 `tests/cdm_regs.sh` 跑一遍再信这两个数字。
+
+## 十、编译刷机固件 + 各机型影响核对（本稿：1.2.0-r3）
 
 ### 10.1 编译命令
 
@@ -386,7 +536,7 @@ JOBS=2 ./build.sh          # 内存紧张时降并行
 ```
 
 - 插件级已在本机验证：`make package/luci-app-airoha-npu/compile` → `rc=0`，
-  产物 `bin/packages/aarch64_cortex-a53/base/luci-app-airoha-npu-1.2.0-r2.apk`。
+  产物 `bin/packages/aarch64_cortex-a53/base/luci-app-airoha-npu-1.2.0-r3.apk`。
   用 `staging_dir/host/bin/apk extract` 解包核对过：包内 `status.js` = `754cfe82…`、
   `luci.airoha_npu` = `58cfc072…`，与源码构建产物 md5 一致。
 - **整包 image 需要你自己跑 `./build.sh`**：本会话里 fakeroot 的 `chown` 在
@@ -410,7 +560,7 @@ JOBS=2 ./build.sh          # 内存紧张时降并行
 | `znxt_zn515xg-d` | **MT7916D**（带 zn515 专用 eeprom 包） | `lan1`，EN8811H |
 
 刷机后自检：`cat /etc/openwrt_release` 看 `DISTRIB_REVISION`；
-`apk list -I | grep airoha-npu` 应显示 `luci-app-airoha-npu-1.2.0-r2`。
+`apk list -I | grep airoha-npu` 应显示 `luci-app-airoha-npu-1.2.0-r3`。
 **刷完记得硬刷新浏览器（Ctrl+Shift+R）**：LuCI 的 JS 带 `?v=` 版本号，
 而那个版本号来自 luci-base 而不是本包，浏览器可能仍用旧的 `status.js`
 （第 9.6 节的 `getTokenInfo` 别名就是为这种情况留的）。
@@ -435,19 +585,19 @@ ethernet@4 (GDM4)        okay / 2500base-x       disabled
   GPY211（PHY ID `67c9:de10`，`kmod-phy-maxlinear`），不是 EN8811H；
   并且 `01_leds` 里本来就没有 fiberhome 的 case（两款都是按 DTS/PHY 默认驱动 LED）。
 - 另外注意：`znxt_zn515xg-d` 的 profile **也带 MT7916**（第 10.2 节表格），
-  如果那台机器上没插无线模块，WiFi 区块同样不会渲染，无副作用。
+  如果那台机器上没插无线模块，CDM4 卡片同样不会渲染，无副作用。
 
 ### 10.4 没有无线的机型：确认不受影响
 
-WiFi 相关的改动全部在插件内部（`getWifiInfo` 的采集 + 视图里的 WiFi 区块），
-而且都是**运行时判定**，没有一行是按机型写死的：
+WiFi 相关的改动全部在插件内部（`getWifiInfo` 的采集 + 视图里的 CDM4 卡片），
+而且都是**运行时判定**，没有一行是按机型写死的；CDM1/CDM2 两张卡与无线无关，所有机型都有：
 
 | 检查项 | 结论 / 证据 |
 |---|---|
 | 包依赖 | `LUCI_DEPENDS:=+luci-base +jsonfilter @TARGET_airoha` —— 不引入任何无线包 |
-| 界面 | `wifi_present=false` ⇒ 整个 WiFi 区块不渲染（用 **504 真机数据**跑整页渲染测试验证：无 WiFi 区块，GDM1/2/4 三张卡 + PSE 10 格完整，轮询刷新后仍在） |
+| 界面 | `wifi_present=false` ⇒ **CDM4 卡片整体不渲染**，CDM1/CDM2 两张卡照常（用 **504 真机数据**跑整页渲染测试验证：GDM1/2/4 三张卡 + CDM1/CDM2 + PSE 10 格完整，轮询刷新后仍在） |
 | RPC | 没有无线时 `command -v iw` 通过但 `iw dev` 返回空 ⇒ 立刻返回 `wifi_present:false`；**不写任何 `/tmp` 状态文件**（真机 504 实测无残留） |
-| 频段判定 | 只认运行时中心频率（<3000→2.4G，<5925→5G，其余 6G），与机型/芯片无关 |
+| 频段判定 | 只认运行时中心频率（<3000→2.4G，<5925→5G，其余 6G）；视图只画 band 0/1，band 2 不生成卡片 |
 | 机型相关文件 | 除 LED 一处（见下），**没有**改任何 DTS/Kconfig/profile |
 
 **唯一会碰到非无线机型的是 `01_leds` 里的 LED 触发器**（第八节的修复）：

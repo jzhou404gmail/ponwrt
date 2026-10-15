@@ -406,6 +406,16 @@
 		"tx_drop": 4,
 		"rx": 501834,
 		"rx_drop": 0
+	},
+	"cdm1": {
+		"tx": 27947572,
+		"rx_cpu": 459730,
+		"rx_hwf": 0
+	},
+	"cdm2": {
+		"tx": 1892731,
+		"rx_cpu": 38141415,
+		"rx_hwf": 1458271
 	}
 }
 ,
@@ -438,5 +448,5 @@
 	]
 }
 ,
-"host":"192.168.32.254","note":"r1 安装版：getWifiInfo 由 getTokenInfo 采集，替代后按新名字存放"
+"host":"192.168.32.254","note":"r1 安装版：getWifiInfo 由 getTokenInfo 采集，替代后按新名字存放。getFrameEngine 的 cdm1/cdm2 是 2026-10-10 在真机 ZN504XG-D 上抓的实读值（CDM1 的 RXHWF 恒为 0：LAN 侧没有硬件转发的帧；CDM2 有 1.46M 的 HWF，说明 WAN 侧确实在卸载）。其余字段是 2026-10-07 的真机抓包。"
 }

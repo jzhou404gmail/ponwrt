@@ -140,6 +140,41 @@ function outline(node, ind, out) {
 }
 const pseCells = tree => countClass(tree, 'soc-pse-cell');
 
+/* 收集所有卡片文字，用来断言 CDM 卡片这一行。
+ *
+ * 匹配必须锚在开头：CDM4 卡片的副标题里写着真实通路
+ * "WiFi → PCIe → GDM3 (P3) → PPE"，不锚定的 /GDM[1234]/ 会把它也算成一张 GDM 卡。 */
+function cardNodes(tree, re) {
+	const hits = [];
+	(function walk(x) {
+		if (!x) return;
+		if (Array.isArray(x)) return x.forEach(walk);
+		if (typeof x !== 'object') return;
+		if (String((x.attrs || {}).class || '').includes('soc-card') && re.test(x.text)) hits.push(x);
+		if (x.children) x.children.forEach(walk);
+		if (x.kids) x.kids.forEach(walk);
+	})(tree);
+	return hits;
+}
+function cardTexts(tree, re) { return cardNodes(tree, re).map(n => n.text); }
+const gdmCards = tree => cardTexts(tree, /^GDM[1234]/);
+const cdmCards = tree => cardTexts(tree, /^CDM[124]/);
+const cdmNodes = tree => cardNodes(tree, /^CDM[124]/);
+
+/* 进度条的底色（不是文字颜色）。CDM 的丢包行用的是文字颜色，
+ * 所以这里收到的只会是那根卸载率条。 */
+function barColors(node) {
+	const out = [];
+	(function walk(x) {
+		if (!x || typeof x !== 'object') return;
+		if (Array.isArray(x)) return x.forEach(walk);
+		const m = String((x.attrs || {}).style || '').match(/background:(#[0-9a-fA-F]{6})/);
+		if (m) out.push(m[1]);
+		if (x.kids) x.kids.forEach(walk);
+	})(node);
+	return out;
+}
+
 /* 找到 "P<port> ..." 那一格并返回它的文字，用来断言 PSE 端口标签。 */
 function pseCell(tree, port) {
 	let hit = '';
@@ -175,27 +210,63 @@ function pseCell(tree, port) {
 		outline(tree, '  ', out);
 		console.log(out.join('\n'));
 
-		const gdm = countCards(tree, /GDM[1234]/);
+		const gdm = gdmCards(tree).length;
 		console.log('  -> 首次渲染: GDM 卡 ' + gdm + ' 张, PSE 端口格 ' + pseCells(tree) + ' 个');
 		if (gdm !== 3) { console.log('  !! 期望 3 张 GDM 卡（GDM1/GDM2 + 铜口那张）'); failures++; }
 
+		/* CDM 行：CDM1(P0)/CDM2(P5) 与 WiFi 无关，必须每台都有；
+		 * CDM4(P7 WiFi DMA) 只在 RPC 真的找到无线的机型上出现。 */
+		const cdm = cdmCards(tree);
+		const wantsWifi = !!(fixture.getWifiInfo && fixture.getWifiInfo.wifi_present);
+		const cdm4 = cdm.filter(t => /^CDM4/.test(t));
+		console.log('  -> CDM 卡 ' + cdm.length + ' 张: ' + cdm.map(t => t.replace(/\s+/g, ' ').slice(0, 46)).join(' | '));
+		if (cdm.filter(t => /^CDM1/.test(t)).length !== 1 || cdm.filter(t => /^CDM2/.test(t)).length !== 1) {
+			console.log('  !! 期望 CDM1(P0) 与 CDM2(P5) 各一张（无 WiFi 也要有）'); failures++;
+		}
+		if (cdm4.length !== (wantsWifi ? 1 : 0)) {
+			console.log('  !! 期望 CDM4 卡 ' + (wantsWifi ? '1 张（该机型有无线）' : '0 张（该机型无无线）')
+				+ '，实际 ' + cdm4.length + ' 张'); failures++;
+		}
+		if (wantsWifi) {
+			const t = cdm4[0];
+			const bands = [/2\.4 GHz/.test(t), /5 GHz/.test(t), /6 GHz/.test(t)];
+			console.log('  -> CDM4 卡内含: 2.4 GHz ' + (bands[0] ? '有' : '无')
+				+ ', 5 GHz ' + (bands[1] ? '有' : '无') + ', 6 GHz ' + (bands[2] ? '有' : '无'));
+			if (!bands[0] || !bands[1] || bands[2]) {
+				console.log('  !! CDM4 卡应含 2.4G + 5G 且不含 6G'); failures++;
+			}
+		}
+
+		/* 卸载率低不是故障：真机上 CDM1 的 RXHWF 就是 0（PON 未连接、
+		   本机终结的流量永远不会被硬件卸载），这根条不能是红条。
+		   红色只留给丢包计数。 */
+		const redBars = cdmNodes(tree).filter(n => barColors(n).includes('#f44336'));
+		const pct = cdmCards(tree).map(t => (t.match(/HW Offload: ([0-9.]+ %|—)/) || [])[1]);
+		console.log('  -> CDM 卸载率: ' + pct.join(' / ') + ' · 红条 ' + redBars.length + ' 根');
+		if (redBars.length) { console.log('  !! 卸载率条不该用红色（低卸载率不是故障）'); failures++; }
+
 		if (!pollStub.fn) { console.log('  !! 视图没有注册 poll 回调'); failures++; continue; }
 		await pollStub.fn();
-		const feAfter = countCards(elements['fe-container'].children, /GDM[1234]/);
-		const wc = elements['wifi-container'];
+		const feAfter = elements['fe-container'].children;
 		const tb = elements['ppe-entries-table'];
-		console.log('  -> 轮询刷新后: #fe-container GDM 卡 ' + feAfter + ' 张, #wifi-container 子节点 '
-			+ (wc ? wc.children.length : 'n/a') + ', PPE 表行 ' + (tb ? tb.rows.length : 'n/a'));
-		if (feAfter !== 3) { console.log('  !! 轮询刷新后 GDM 卡丢失'); failures++; }
+		console.log('  -> 轮询刷新后: #fe-container GDM 卡 ' + gdmCards(feAfter).length
+			+ ' 张, CDM 卡 ' + cdmCards(feAfter).length + ' 张, PPE 表行 ' + (tb ? tb.rows.length : 'n/a'));
+		if (gdmCards(feAfter).length !== 3) { console.log('  !! 轮询刷新后 GDM 卡丢失'); failures++; }
+		if (cdmCards(feAfter).length !== cdm.length) { console.log('  !! 轮询刷新后 CDM 卡数量变了'); failures++; }
 
 		/* 降级：RPC 返回空载荷时，必须给出可见原因而不是静默空白 */
 		fixture = Object.assign({}, fixtureBase, { getFrameEngine: {} });
 		await pollStub.fn();
 		const feEmpty = elements['fe-container'].children;
 		const warn = countClass(feEmpty, 'soc-warn');
-		console.log('  -> 降级（getFrameEngine 返回 {}）: GDM 卡 ' + countCards(feEmpty, /GDM[1234]/)
-			+ ' 张, 提示条 ' + warn + ' 个' + (warn === 1 ? '  ✅ 说明了原因' : '  !! 静默空白'));
+		console.log('  -> 降级（getFrameEngine 返回 {}）: GDM 卡 ' + gdmCards(feEmpty).length
+			+ ' 张, CDM 卡 ' + cdmCards(feEmpty).length + ' 张, 提示条 ' + warn + ' 个'
+			+ (warn === 1 ? '  ✅ 说明了原因' : '  !! 静默空白'));
 		if (warn !== 1) failures++;
+		/* 旧 RPC（没有 cdm1/cdm2 键）也必须画出 CDM1/CDM2 两张卡，只是不给数字。 */
+		if (cdmCards(feEmpty).filter(t => /^CDM[12]/.test(t)).length !== 2) {
+			console.log('  !! 空载荷下 CDM1/CDM2 卡片消失（应画出但标为不可用）'); failures++;
+		}
 	}
 
 	/* ── AN7583 布局：铜口在 GDM3 / PSE P3 ──
@@ -230,11 +301,14 @@ function pseCell(tree, port) {
 			console.log(out.join('\n'));
 
 			const checks = [
-				[countCards(tree, /GDM3.*Copper PHY/) === 1, '铜口卡命名为 GDM3 且带 Copper PHY'],
-				[countCards(tree, /GDM[1234]/) === 3, 'GDM 卡 3 张（GDM1/GDM2/GDM3）'],
+				[countCards(tree, /^GDM3.*Copper PHY/) === 1, '铜口卡命名为 GDM3 且带 Copper PHY'],
+				[gdmCards(tree).length === 3, 'GDM 卡 3 张（GDM1/GDM2/GDM3）'],
+				[cdmCards(tree).filter(t => /^CDM[12]/.test(t)).length === 2, 'CDM1/CDM2 两张卡都在（该机型无 WiFi）'],
+				[cdmCards(tree).filter(t => /^CDM4/.test(t)).length === 0, '无 WiFi 时不画 CDM4 卡'],
 				[/Copper PHY/.test(pseCell(tree, 3)), 'P3 标成 Copper PHY'],
 				[/PCIe\/USB SerDes/.test(pseCell(tree, 9)), 'P9 标成 PCIe/USB SerDes'],
-				[!/Copper PHY/.test(pseCell(tree, 9)), 'P9 不再谎称 Copper PHY']
+				[!/Copper PHY/.test(pseCell(tree, 9)), 'P9 不再谎称 Copper PHY'],
+				[!/CDM4/.test(pseCell(tree, 7)) && !/^P7/.test(pseCell(tree, 7)), 'P7 不在 PSE 网格里重复出现（CDM4 卡负责它）']
 			];
 			for (const [ok, what] of checks) {
 				console.log('  -> ' + (ok ? '✅ ' : '!! ') + what);
