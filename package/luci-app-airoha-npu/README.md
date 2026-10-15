@@ -1,7 +1,8 @@
 # luci-app-airoha-npu (PonWrt port)
 
-Real-time monitoring and management dashboard for the Airoha AN7581 SoC:
-NPU offload, CPU frequency, Frame Engine internals and the PPE flow table.
+Real-time monitoring and management dashboard for the Airoha AN7581 and
+AN7583 SoCs: NPU offload, CPU frequency, Frame Engine internals and the PPE
+flow table.
 
 This is a port of [rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)
 v1.1.4 to **PonWrt**, where the WAN is the **PON port** instead of the EN8811
@@ -34,9 +35,17 @@ Concretely:
 - **GDM2 card** is now the active PON / WAN card. It shows live TX/RX, drops
   and the link state (`carrier`, which `airoha-xpon` drives from the ONU
   registration / service GEM state), and the resolved netdev name.
-- **GDM4 card** is labeled as the 2.5G PHY (a LAN port here).
-- **PSE port grid**: `P2` = GDM2 (PON/WAN), `P9` = GDM4 (2.5G); RX drops are
-  collected for P1/P2/P9 instead of P1/P9.
+- **Copper PHY card** is labeled as the board's 2.5G/10G PHY (a LAN port here).
+  Its GDM is resolved rather than assumed: AN7581 wires the external PHY to
+  **GDM4** (`ethernet@4`, PSE port `P9`), while AN7583 has no `ethernet@4` at
+  all and puts it on **GDM3** (`ethernet@3`, PSE port `P3`), with GDM4 reaching
+  only the PCIe/USB SerDes there. The RPC reports the resolved index as
+  `gdm_copper` (the legacy `gdm4` key is still emitted for older clients) and
+  identifies the port by its DTS `phy-mode`, the same way the netdev names are
+  resolved. The card and the PSE cell are named from that index, and the
+  `P9`/`P3` RX-drop counter follows it.
+- **PSE port grid**: `P2` = GDM2 (PON/WAN) and the copper port as above; RX
+  drops are collected for P1/P2 plus the copper port instead of P1/P9.
 - **`/usr/bin/ppe-verify`** resolves the WAN interface instead of assuming
   `wan`. It also no longer uses the `${var^^}` bashism (which aborts busybox
   ash) and no longer double-prints `0` when the PPE table is empty.

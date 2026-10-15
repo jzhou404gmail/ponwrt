@@ -1,0 +1,48 @@
+#
+# Copyright (C) 2025 OpenWrt.org
+#
+
+. /lib/functions/uci-defaults.sh
+
+board_config_update
+
+# ---------------------------------------------------------------------------
+# 本 fork 的规则：**所有带无线的机型都用同一套无线默认值**，保持一致：
+#
+#   1. 国家码 CN              （不设的话内核停在世界域，5G 选 160MHz 会起不来，见 §2.6）
+#   2. 5G 默认 160MHz         （2.4G 仍 20MHz；phy 上限不足时自动截断）
+#   3. 不做双频合一           2.4G = ImmortalWrt、5G = ImmortalWrt_5G
+#   4. 默认 WPA2-PSK + 固定初始密钥，刷完由用户自己改
+#      （不用"开放网络"当默认：等于把 LAN 敞开，而且以后在 LuCI 里改成 WPA2-PSK
+#        却忘了填密钥会让 hostapd 以 INVALID_WPA_PSK 启动失败、AP 起不来）
+#
+# 当前在册的三款：HG5585F-CT、HG5585F-CU、ZN515XG-D（都是 MT7916/MT7916D，中国机型）。
+# **以后新增带无线的机型，把它的 board_name 加进下面的 case 即可**（一行），
+# 其余机型（含本 target 里上游的 valyrian / evb 等开发板）一律不动。
+# ---------------------------------------------------------------------------
+case "$(board_name)" in
+fiberhome,hg5585f-ct|\
+fiberhome,hg5585f-cu|\
+znxt,zn515xg-d)
+	# 1) 国家码。MT7916/MT7916D 的 EEPROM 里没有可用国家码，不设的话内核停在
+	#    世界域 00：那里唯一允许起 AP 的 5GHz 段（5170-5250）正好只有 80MHz 宽，
+	#    所以选 160MHz 时 hostapd 起不来、radio 整块消失，手选 CN/US 才正常。
+	#    这三款都是中国机型，默认 CN；ImmortalWrt 的 regdb 补丁把 5150-5350
+	#    变成整段无 DFS 的 160MHz，5G 才能跑 160MHz。
+	ucidef_set_country CN
+
+	# 2) 默认带宽：板级声明 5G 用 160MHz（2.4G 仍 20MHz，其它机型不受影响）。
+	ucidef_set_wireless_width 5g 160
+
+	# 3) 两个频段各有各的 SSID = 不做双频合一：2.4G 客户端不会被隐式"融合"
+	#    到 5G 上，两个 SSID 在客户端列表里各自独立。
+	# 4) 默认加密：UCI 的 psk2 就是 LuCI 的 "WPA2-PSK"（WPA2 + CCMP）；
+	#    密钥固定 12345678（8 位是 WPA-PSK 的下限），刷完请自己改掉。
+	ucidef_set_wireless 2g "ImmortalWrt" psk2 12345678
+	ucidef_set_wireless 5g "ImmortalWrt_5G" psk2 12345678
+	;;
+esac
+
+board_config_flush
+
+exit 0
