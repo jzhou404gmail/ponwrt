@@ -8,11 +8,19 @@
 上游 README 与 `README_zh.md` 保持原样未改，本文件只记录**这个 fork 相对上游多出来的东西**：
 每一处硬件修复的**现象、根因、证据和验证方法**，以及一套"不破坏增量编译"的编译入口。
 
-> **本 fork 的基线**：上游 `c3b518baec`（`firewall4: include transparent bridge ports in flowtable`）。
-> 在此之上有 **11 个提交**（见 §1）。上游随后又前进了 5 个提交
-> （`04986da1e6`，新增 H3C HM-2004-DU 机型、HG5585F 复位键与面板 LED 修复、
-> EN8811H 复位时序改回 `10000/20000us`），**本 fork 有意暂未合并** ——
-> 那会把已经刷机验证过的 EN8811H 复位时序改掉。合并方式见 §8.3。
+> **本 fork 的基线**：上游 `c3b518baec`（`firewall4: include transparent bridge ports in flowtable`），
+> 在此之上是本 fork 自己的改动清单（见 §1）。
+>
+> **2026-10-16 已同步上游 `c3b518baec..a57faf93c6`**（6 个提交：新增 H3C HM-2004-DU 机型、
+> HG5585F 复位键与面板 LED 修复、EN8811H 复位时序、FIT/ITS 镜像等）。合并文本上干净，
+> 但有**两处语义取舍** git 不会替你决定，这次的取舍是"两处都跟着上游走"（细节见 §8.3）：
+>
+> | 项 | 决定 |
+> |---|---|
+> | HG5585F-CU 面板灯：上游 `gpio-leds` 还是本 fork 的 PHY LED0 mux | **采用上游方案**，本 fork 的 mux 已撤掉（§2.3） |
+> | EN8811H 复位时序：上游 `10000/20000us` 还是本 fork 的 `1000000/100000us` | **采用上游值**（本 fork 原先"故意不合并这笔提交"的做法从 2026-10-16 起作废；§8.3 记了需要时改回去的命令） |
+>
+> 同步没有覆盖任何本 fork 已提交的改动：同步前后"相对上游的差异文件集合"完全一致（58 个文件）。
 
 ---
 
@@ -31,6 +39,7 @@
 | 9 | `base-files` | **IPTV 机顶盒报 2001** 的组播 VLAN MAC 学习修复 | 功能修复 |
 | 10 | `docs` | NPU 移植说明、IPTV 组播指南、PON 掉线采样脚本、渲染回归测试 | 文档 |
 | 11 | `feeds.conf.default` | 注释形式记录可选的 PassWall feed | 说明 |
+| 12 | `airoha/an7581` | **无线默认值（带无线的三款机型统一）**：国家码 CN、5G 160MHz、2.4G/5G 各自 SSID（`ImmortalWrt` / `ImmortalWrt_5G`）、默认 WPA2-PSK 密钥 `12345678` | 默认值修复 |
 
 ---
 
@@ -175,12 +184,114 @@ PHY 那一刻可能还被按在复位里，ID 扫描读到 `0xffffffff`，内核
 **修复**：给 phy2/3/4 补上显式的 `lan` function 与枚举号 2/3/4，命名变成确定的，
 netdev 触发器可以按名字精确落到对应的口。
 
+### 2.6 5G 选 160MHz 后"无线消失"：世界监管域里没有 160MHz 段 `[实测]`
+
+**机型**：`fiberhome_hg5585f-ct`、`fiberhome_hg5585f-cu`（MT7916D）
+
+**现象**：5G 带宽选 160MHz、国家码留在默认（空 / 驱动默认）时，5G 无线整块消失、AP 起不来；
+把国家码手动选成 CN 或 US 就一切正常。
+
+**这不是代码 bug，是监管域（regulatory domain）问题**。生成的 `/etc/config/wireless` 里
+`country=''`，而 wifi 脚本只在 `country_code` 非空时才 `iw reg set`（UCI 的 `country` 经
+schema 别名转成 `country_code` 后判空），hostapd 同样拿不到国家码。于是内核停在
+**世界域 `country 00`**：
+
+```
+country 00:
+	(5170 - 5250 @ 80), (20), AUTO-BW        # 只有这一段允许起 AP，宽度就 80MHz
+	(5250 - 5330 @ 80), (20), NO-IR, DFS     # DFS 段
+	(5490 - 5730 @ 160), (20), NO-IR, DFS    # 唯一 160MHz 宽的一段，也是 DFS 段
+	(5735 - 5835 @ 80), (20), NO-IR
+```
+
+160MHz 需要一整段连续可用的 160MHz（ch36–64 或 ch100–128）：36–64 在世界域里只有 80MHz 宽；
+100–128 属 DFS 段，而没设国家码时 hostapd 配置里不会有 `ieee80211h`（`device_country_code()`
+在 `country_code` 为空时提前返回），wiphy 的 DFS region 也是 `UNSET`，cfg80211 直接拒绝起 AP。
+hostapd 启动失败 → netifd 重试 3 次后放弃 → LuCI 里连这个 radio 都看不到。
+**80MHz 之所以没事**，正是因为 ch36–48 那一块本身允许起 AP。
+
+CN / US 能行是 **ImmortalWrt 的 `wireless-regdb` 补丁**
+（`600-custom-change-txpower-and-dfs.patch`，**不是本 fork 加的**）把这两个国家的 5GHz
+改成了无 DFS / 无 NO-IR 的整段 160MHz：
+
+```
+country CN: DFS-FCC
+	(5150 - 5350 @ 160), (30)      # ch36-64 一整块 160MHz，不带 DFS
+	(5725 - 5850 @ 80), (33)
+```
+
+**修复（源码级默认值）**：新增
+`target/linux/airoha/an7581/base-files/etc/board.d/03_wireless`。
+> 📌 **本 fork 的规则：所有带无线的机型共用同一套无线默认值**，保持一致。
+> 当前在册三款：`HG5585F-CT`、`HG5585F-CU`、`ZN515XG-D`。
+> **以后新增带无线的机型，把它的 `board_name` 加进这个 `case` 即可（一行）**；
+> 不带无线的机型（含本 target 里上游的 valyrian / evb 等开发板）一律不动。
+>
+> 规则内容：① 国家码 CN　② 5G 默认 160MHz　③ 不做双频合一　④ 默认 WPA2-PSK + 固定初始密钥
+
+```sh
+ucidef_set_country CN             # -> board.json: wlan.defaults.country = "CN"
+ucidef_set_wireless_width 5g 160  # -> board.json: wlan.defaults.widths.5g = 160
+
+# 不做双频合一：2.4G / 5G 各用各的 SSID；默认 WPA2-PSK + 初始密钥
+ucidef_set_wireless 2g "ImmortalWrt"    psk2 12345678   # -> wlan.defaults.ssids.2g
+ucidef_set_wireless 5g "ImmortalWrt_5G" psk2 12345678   # -> wlan.defaults.ssids.5g
+```
+
+- `ucidef_set_country` 是上游函数（`package/base-files/files/lib/functions/uci-defaults.sh`），
+  `/lib/wifi/mac80211.uc` 生成配置时把它写进每个 radio 的 `country`，之后 `iw reg set CN`
+  和 hostapd 的 `country_code=CN` 都会生效（2.4G 也一起拿到 CN，该国 2.4G 限值更宽）。
+- `ucidef_set_wireless_width` 是本 fork 新加的 helper（同一文件），落到
+  `wlan.defaults.widths.<band>`。`mac80211.uc` 原来把非 2.4G 的默认宽度**一律压到 80MHz**，
+  现在改为"板级声明优先（再按 phy 的 `max_width` 截断），没声明仍是 80MHz" ——
+  其它机型（含 6GHz 机型）的生成结果**逐字节不变**。
+- `ucidef_set_wireless` 也是上游函数，落到 `wlan.defaults.ssids.<band>`，
+  `mac80211.uc` 用它生成 `default_radio<N>` 的 `ssid` / `encryption` / `key`。
+  第三个参数 `psk2` 就是 LuCI 里显示的 **"WPA2-PSK"**（WPA2 + CCMP），第四个是密钥
+  （8–63 位，`12345678` 正好是下限，刷完请自己改）。
+  **两频段 SSID 不同 = "不做双频合一"**：2.4G 客户端不会被隐式"融合"到 5G，
+  两个 SSID 在客户端列表里各自独立存在。
+- **为什么默认不做成"开放网络"**（`ucidef_set_wireless 2g "ImmortalWrt"` 只给 SSID）：
+  ① 开放 AP 等于把 LAN 敞开，邻居连上就能访问你的内网与 LuCI；
+  ② 更阴的是"以后想加密"这一步 —— 在 LuCI 里把加密改成 WPA2-PSK 却忘了填密钥时，
+  hostapd 会以 **`INVALID_WPA_PSK`** 启动失败、AP 整块起不来。给个固定初始密钥就没有这个坑。
+  > 确实想要开放：只传 SSID 不传 encryption/key 即可（生成 `encryption='none'` + `key=''`）。
+  > ⚠️ 反过来，**绝对不要**只填 `psk2` 而把密钥留空 —— 那就是上面那个 `INVALID_WPA_PSK`。
+
+**上机自检**：
+
+```sh
+jsonfilter -i /etc/board.json -e '@.wlan.defaults'
+# {"country":"CN","widths":{"5g":"160"},"ssids":{"2g":{...psk2...},"5g":{...psk2...}}}
+uci show wireless | grep -E "country|htmode"          # country='CN'  htmode='HE160'
+uci show wireless | grep -E "ssid|encryption|key"
+#   2.4G: ssid='ImmortalWrt'     encryption='psk2'  key='12345678'
+#   5G  : ssid='ImmortalWrt_5G'  encryption='psk2'  key='12345678'
+iw reg get | head -2                                  # country CN
+iw dev phy1-ap0 info | grep -E "channel|width"        # width: 160 MHz
+```
+
+> `/etc/board.json` 只在**首次启动**（该文件不存在时）由 `/etc/board.d/*` 生成。
+> 从旧固件保留配置升上来的机器不会自动套用新默认值：要么 `rm /etc/board.json` 后重启
+> 重新生成，要么直接在 LuCI 里改（国家码 CN / 带宽 160MHz / SSID / 自己设密码）。
+> 注意 **`/etc/config/wireless` 会被保留配置刷机原样留下**，所以 SSID 与加密的默认值
+> 也只对"全新配置"生效；想立刻拿到新默认值：
+>
+> ```sh
+> rm /etc/config/wireless && wifi config && uci commit wireless && wifi up
+> ```
+>
+> 生成逻辑已用宿主 `ucode` 做过回归（三款在册机型 → `country='CN'` + 5G `HE160` +
+> 2.4G `ImmortalWrt` / 5G `ImmortalWrt_5G` + `psk2` + `key='12345678'`；板级不声明 → 仍
+> `HE80`/空国家码/单 SSID/`none`，`max_width=80` 时按 80 截断），
+> 但**默认值改动本身还没上机**，按 §6.2 验一行即可。
+
 ---
 
 ## 3. LuCI NPU 面板（`luci-app-airoha-npu`）
 
 移植自 [rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)
-v1.1.4（本 fork 内版本 `1.2.0-r2`），把 **WAN = 2.5G 铜口**改成 **WAN = PON 口**。
+v1.1.4（本 fork 内版本 `1.2.0-r3`），把 **WAN = 2.5G 铜口**改成 **WAN = PON 口**。
 
 上游假设 WAN 是 GDM4 上的 2.5G PHY（netdev `wan`）、GDM2 的 PON 数据面在 DTS 里是关的，
 所以把 GDM2 卡片写死成"未启用"。PonWrt 上角色正好反过来：
@@ -202,12 +313,19 @@ v1.1.4（本 fork 内版本 `1.2.0-r2`），把 **WAN = 2.5G 铜口**改成 **WA
 - **GDM4 不是 2.5G**（Gemtek XG2010G 是 10G RTL8261N）：速率标签改为从 DTB `phy-mode`
   动态取（`2500base-x`→2.5G、`10gbase-r/usxgmii`→10G、`internal`→switch）。
 
-**WiFi 区块是重写的，不是照搬上游**：上游读的 `token_info` debugfs 只由 mt7996 的 NPU
-代码创建（MT7916 上不存在），匹配的 `phy0.<band>-` 也是 mt7996 单 phy 多频段的命名
-（MT7916D 是两个 PCIe HIF ⇒ `phy0-ap0` / `phy1-ap0`，上游正则一个都匹配不上）。
+**WiFi 内容画在 CDM4 卡片里，且数据源是重写的，不是照搬上游**：上游读的 `token_info` debugfs
+只由 mt7996 的 NPU 代码创建（MT7916 上不存在），匹配的 `phy0.<band>-` 也是 mt7996 单 phy
+多频段的命名（MT7916D 是两个 PCIe HIF ⇒ `phy0-ap0` / `phy1-ap0`，上游正则一个都匹配不上）。
 现在只用芯片真机上确实存在的数据源：`iw dev info` / `station dump` / `survey dump` /
 hwmon 温度。信道占用按两次 survey 采样的**差值**算当前值（累加值直接相除得到的是开机
-至今均值）；**取不到的数据一律不画那一行**，不甩假 0。
+至今均值）；**取不到的数据一律不画那一行**，不甩假 0。频段只画 2.4G / 5G 两张。
+
+**CDM 卡片行**：Frame Engine 区块新增 `CDM1 (P0)` / `CDM2 (P5)` 两张 CPU DMA 引擎卡片，
+**所有机型都画**（与有没有无线无关），显示 `HW Offload = RXHWF_OK / (RXCPU_OK + RXHWF_OK)`
+卸载率条与 `CPU / HWF / TX` 计数；无线机型在下面再画 `CDM4 (P7 WiFi DMA)` 卡片，
+里面就是那两个频段的详细卡片。CDM 计数器直接读寄存器（`CDM_BASE(0x400/0x1400) + 0x180`
+起的 `TX_OK` / `RXCPU_OK` / `RXHWF_OK` / 两个 drop）—— 这几个计数器内核驱动**从来不读**
+（只碰 CDM 的配置寄存器），所以用户态读它们不像 GDM MIB 那样会偷走内核的计数。
 
 **后端**：
 
@@ -310,6 +428,26 @@ JOBS=2 ./build.sh          # 内存紧张时降并行
 症状是 libunistring/perl 之类完全无关的包"随机"编译失败，极难排查。`build.sh` 用
 `tmp/build.lock` 挡住这种情况，确认真没别的构建在跑时才加 `--force`。
 
+**收尾汇总**：编译结束时会打印**开始时间 / 结束时间 / 总共耗时**（成功、失败、
+Ctrl-C 中断三种情况都会打；`SUMMARY_DONE` 去重，中断时不会既报"被中断"又报"失败"），
+同一段也追加进 `tmp/build.log` 末尾，方便事后对时间。
+
+**每个包的日志 + 失败自愈**：`build.sh` 默认开 `BUILD_LOG=1`，每个包的完整输出落在
+`logs/<包>/compile.txt`（整棵树约 2.5 MB，已在 `.gitignore` 里）。这样任何失败都有明细可查 ——
+`tmp/build.log` 里通常只有一行 `ERROR: <包> failed to build.`，**真正的报错只在这份日志里**。
+
+> 🐛 **已知的时序性失败（"静默被打断"）**：某个包的子 make 被信号打断，于是
+> `tmp/build.log` 里只有那一行 ERROR、而 `logs/<包>/compile.txt` 是**空文件**（连
+> `time.pl` 的 `time: <包>/compile#...` 都没有）—— 这不是编译报错，重编一次就好。
+> `build.sh` 会按这个判据自动处理：① 单独 `make <包>/compile` 把该包编好；
+> ② 重新跑整个构建（最多 2 轮）；③ 打印说明，绝不静默重试。
+> 判据"`logs/<包>/compile.txt` 为空"**不会误伤真报错** —— 真报错时该文件非空，脚本直接失败退出。
+> 实测（桩 make 单测）：正常 1 次通过；静默失败 → 自动重编 + 第 2 次尝试通过；真报错 → 立即失败并打印日志末尾。
+>
+> 排查这类问题时，先看三处：`logs/<包>/compile.txt`（为空 = 被打断）、
+> `dmesg | grep -i oom`（内存击杀，需要 root）、以及**同一棵树里有没有第二个 `make` 在跑**
+> （`build.sh` 的锁挡不住手敲的 `make`）。
+
 ### 5.4 产物
 
 ```
@@ -318,7 +456,7 @@ bin/targets/airoha/an7581/ponwrt-airoha-an7581-<机型>-initramfs-recovery.itb  
 ```
 
 `bin/targets/airoha/an7581/ponwrt-airoha-an7581.manifest` 里应能看到
-`luci-app-airoha-npu - 1.2.0-r2`。
+`luci-app-airoha-npu - 1.2.0-r3`。
 
 支持并已一起编译的 12 个 AN7581 机型：
 
@@ -329,6 +467,10 @@ fiberhome_hg5585f-ct-usb-sfp  nokia_xg-040g-tf-ubi       unionman_ung00a
 fiberhome_hg5585f-cu       gemtek_xg2010g
 fiberhome_hg5585f-cu-usb-sfp
 ```
+
+> 上游 2026-10-16 之后又多了一个 AN7581 机型 **`h3c_hm2004-du`**（H3C HM-2004-DU），
+> `configs/an7581.config` 里**没有选**它 —— 想一起编就在配置里加
+> `CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_h3c_hm2004-du=y`。
 
 AN7583 目标（`nokia_xg-040g-mf`、`nokia_xg-040g-mf-ubi`）用 `configs/an7583.config`。
 
@@ -350,7 +492,7 @@ AN7583 目标（`nokia_xg-040g-mf`、`nokia_xg-040g-mf-ubi`）用 `configs/an758
 
 ```sh
 cat /etc/openwrt_release                      # 看 DISTRIB_REVISION
-apk list -I | grep airoha-npu                 # 应见 luci-app-airoha-npu-1.2.0-r2
+apk list -I | grep airoha-npu                 # 应见 luci-app-airoha-npu-1.2.0-r3
 
 for d in /sys/class/net/*; do
   echo "$(basename $d) -> $(basename $(readlink -f $d/of_node))"
@@ -369,6 +511,7 @@ dmesg | grep -i "NPU fw version"
 | 面板口序 | UNG00A | 四根线分别插 LAN1..4，`ip -br link` 看 carrier 是否落在 lan1..4（**不是**按 port 顺序） |
 | 四个 LAN 灯 | HG5585F-CU | ① `ls /sys/class/leds/` 应出现 4 个 `blue:lan-*`（**不是** `mt7530-0:*:green:lan-*`，那是已撤掉的 PHY LED0 方案）；② `dmesg \| grep -iE 'pinctrl\|gbe-led'` 不应有 `-EINVAL` / "not supported" 报错；③ **逐口插线看灯**；④ `dmesg \| grep -i 'leds-gpio'` 不应报无法申请 GPIO43-46 |
 | lan1 冷启动一致性 | HG5585F-CT | `reboot`（热重启）后立刻 `cat /sys/class/net/lan1/carrier`，应看到 `1`；`dmesg \| grep -i "GPY211\|Clause 45"` 不应出现 Generic Clause 45 PHY |
+| 无线默认值（CN / 160MHz / SSID / WPA2-PSK） | HG5585F-CT / HG5585F-CU / ZN515XG-D | `jsonfilter -i /etc/board.json -e '@.wlan.defaults'` 应见 `country:"CN"`、`widths.5g:"160"`、`ssids.2g/5g`；`uci show wireless \| grep -E "country\|htmode"` 应见 `country='CN'` 与 `htmode='HE160'`；`uci show wireless \| grep -E "ssid\|encryption\|key"` 应见 2.4G=`ImmortalWrt` / 5G=`ImmortalWrt_5G`、两侧 `encryption='psk2'` 且 `key='12345678'`；`iw dev phy1-ap0 info \| grep width` 应见 `width: 160 MHz`；手机能搜到**两个** SSID，用 `12345678` 能连上（随后自己去 LuCI 改密码） |
 | IPTV 组播 | 任意 | §4 的两条命令 |
 
 > LuCI 的 JS 带 `?v=` 版本号，而那个版本号来自 luci-base 不是本包，**刷完请硬刷新浏览器
@@ -422,32 +565,36 @@ HG5585F 这类机型上 WiFi 的实际通路是
 MT7916 数据源重写。`docs/luci-app-airoha-npu-port/upstream/` 里保留了上游原始文件，
 方便对比。
 
+同理，**5G 能跑 160MHz 这件事本身来自 ImmortalWrt 的 `wireless-regdb` 补丁**
+（CN / US 的 5GHz 被改成整段 160MHz 且不带 DFS），本 fork 只负责把"默认用哪个国家码、
+默认多宽"落到板级默认值里（见 §2.6）。
+
 ### 8.3 与上游后续提交的关系
 
-上游 `c3b518baec..04986da1e6` 的 5 个提交里有三处和本 fork 的改动**同区域**：
+**2026-10-16 已把上游 `c3b518baec..a57faf93c6`（6 个提交）合并进来**，`git merge` 文本上
+干净（无冲突），但有三处是**语义层面**的取舍 —— git 只按行合并，不会替你判断：
 
-| 上游提交 | 内容 | 与本 fork 的关系 |
+| 上游提交 | 内容 | 同步后的状态 |
 |---|---|---|
-| `91077e9a6b` | HG5585F 复位键 GPIO 修正 + 补全面板 LED | ⚠️ **同一组引脚的两种方案**：上游把 **GPIO43-46 当普通 GPIO 灯**用（`gpio-leds`，CT 蓝 / CU 绿），并在 `01_leds` 里绑 `blue:lan-1..4`；本 fork 则把**同样这 4 个脚 mux 成 PHY LED0 输出**。两者互斥，合并后会同时存在，必须上机确认哪一种才对 |
-| `69cd3e269f` | 把 EN8811H 复位时序改回 `10000/20000us` | **冲突面**：本 fork 保留 `1000000/100000us`（已刷机验证过） |
-| `77ad7d0643` | 新增 H3C HM-2004-DU 机型 | **独立**，无重叠 |
+| `91077e9a6b` | HG5585F 复位键改 GPIO35 + 新增 WPS/RFKILL 键 + 面板 LED（GPIO43-46 当普通 `gpio-leds`） | **采用上游方案**：本 fork 原先把同样这 4 个脚 mux 成 PHY LED0，两套写法会互相抢脚，已撤掉本 fork 那份，只留一段防回归注释（§2.3） |
+| `69cd3e269f` | 把 EN8811H 复位时序改回 `10000/20000us` | ✅ **决定跟随上游**（`10000/20000us`）。本 fork 以前的做法是"故意不合并这笔提交"、保留刷机验证过的 `1000000/100000us`，**从 2026-10-16 起作废**，改为跟上上游。受影响的是 4 个 DTS 里的 EN8811H 复位时序：`an7581-nokia_xg-040g-md-common.dtsi`、`an7581-unionman-ung00a.dts`、`an7581-znxt-zn50xg-d-common.dtsi`、`an7583-nokia_xg-040g-mf-common.dtsi`。**若日后 2.5G 口出现探测不稳**，用下面这条命令改回长时序（只动这 4 个文件的这两个属性）：<br>`sed -i 's/reset-assert-us = <10000>;/reset-assert-us = <1000000>;/; s/reset-deassert-us = <20000>;/reset-deassert-us = <100000>;/'` + 上列 4 个文件 |
+| `77ad7d0643` | 新增 H3C HM-2004-DU 机型（+ 新的 `board.d/03_pon_data`） | 已并入；`configs/an7581.config` 未选该机型（§5.4）。`03_pon_data` 把 PON 板卡数据的布局写进 `board.json`，本 fork 的 NPU 面板不读它（直接读 sysfs/debugfs），两者不冲突 |
+| `ad21123a0f` | 去掉 an758x 无意义的 `DEVICE_DTS_CONFIG` | 已并入；本 fork 的 `configs/*.config` 与 `build.sh` 都没引用这个符号，无需处理 |
 
-实测 `git merge-tree` 合并**无冲突**（文本上），两边的 `01_leds` 改动能并存。
-但上面第一行的**语义冲突不会被 git 发现**，所以要合的话：
+**下次再同步上游时的检查清单**（这次踩过的坑）：
 
 ```sh
-git remote add upstream https://github.com/pbs05/ponwrt.git
-git fetch upstream master
-git merge upstream/master          # 文本上干净
-git diff HEAD~1 -- '*reset-*'      # ① 确认 EN8811H 复位时序是否被改成 10000/20000
-grep -n 'gpio4[3-6]' \
-  target/linux/airoha/dts/an7581-fiberhome-hg5585f-common.dtsi \
-  target/linux/airoha/dts/an7581-fiberhome-hg5585f-cu-common.dtsi   # ② 看 GPIO43-46 被谁占
+git fetch origin
+git merge origin/master
+git diff HEAD~1 -- target/linux/airoha/dts/       # ① 上游动了哪些 DTS（复位时序、LED、pinctrl 都在这里）
+git diff HEAD~1 -- '*reset-*'                     # ② 专门看 EN8811H 复位时序有没有再变
+grep -n 'gpio4[3-6]' target/linux/airoha/dts/an7581-fiberhome-hg5585f-*.dtsi   # ③ GPIO43-46 归谁
 ```
 
-**结论：合并上游之前，先用 HG5585F-CU 上机把 GPIO43-46 的归属确认下来**
-（PHY LED0 输出 vs 普通 GPIO 灯），否则会出现"pinctrl 说是 PHY 灯、gpio-leds 说是 GPIO 灯"
-的互相打架，表现为其中一个静默失效。
+**教训**：本 fork 有些"个性化"并不体现在提交里，而是"**故意不合并上游的某一笔提交**"
+（EN8811H 复位时序在 2026-10-16 之前就是这种）。这类差异 `git merge` 一定会静默接受上游版本、
+也一定不报冲突，所以**每次同步后都要把 DTS 手工 diff 一遍**，别只看 git 有没有冲突 ——
+这次的决定是两处都跟随上游，但**必须是你看着 diff 主动决定的**，不能被 git 悄悄带走。
 
 ---
 
@@ -455,10 +602,18 @@ grep -n 'gpio4[3-6]' \
 
 ```
 build.sh / build-watch.sh / build-live.sh     编译入口与两种进度观察
-package/luci-app-airoha-npu/                  NPU/Frame Engine 面板（1.2.0-r2）
+package/luci-app-airoha-npu/                  NPU/Frame Engine 面板（1.2.0-r3）
 target/linux/airoha/patches-6.18/
     950-npu-expose-fw-version-sysfs.patch     NPU 版本/核数 sysfs
 package/base-files/files/                     IPTV 组播 MAC 学习修复（4 个触发点）
+package/base-files/files/lib/functions/
+    uci-defaults.sh                           + ucidef_set_wireless_width()
+package/network/config/wifi-scripts/files/lib/wifi/
+    mac80211.uc                               默认带宽支持板级 widths 声明
+target/linux/airoha/an7581/base-files/etc/board.d/
+    03_wireless                               带无线机型统一默认值：国家码 CN、5G 160MHz、
+                                              双 SSID（ImmortalWrt / ImmortalWrt_5G）、
+                                              默认 WPA2-PSK（密钥 12345678）
 docs/luci-app-airoha-npu-port/README.md       移植全过程、根因取证、逐机型核对
 docs/iptv-udpxy-omcproxy-guide.md             udpxy + omcproxy 完整指南（已脱敏）
 docs/pon-link-watch.sh                        PON 光功率/温度/注册计数器定时光采样
