@@ -1,0 +1,28 @@
+#
+# Copyright (C) 2025 OpenWrt.org
+#
+
+. /lib/functions/uci-defaults.sh
+
+board_config_update
+
+case "$(board_name)" in
+fiberhome,hg5585f-ct|\
+fiberhome,hg5585f-cu)
+	# The MT7916D EEPROM carries no usable country, so without a country
+	# code the kernel keeps the world regulatory domain. Its only 5 GHz
+	# block that may run an AP (5170-5250) is exactly 80 MHz wide, which
+	# is why a 160 MHz AP silently fails to start - the radio never comes
+	# up - until the user picks a country by hand.
+	#
+	# Both boards are China-market CPEs, so default to CN. ImmortalWrt's
+	# wireless-regdb patch turns 5150-5350 into a single 160 MHz block
+	# without DFS or NO-IR, which lets the 5 GHz radio run at 160 MHz.
+	ucidef_set_country CN
+	ucidef_set_wireless_width 5g 160
+	;;
+esac
+
+board_config_flush
+
+exit 0

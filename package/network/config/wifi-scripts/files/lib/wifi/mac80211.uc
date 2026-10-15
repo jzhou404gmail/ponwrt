@@ -53,9 +53,18 @@ for (let phy_name, phy in board.wlan) {
 		let rband = radio.bands[band_name];
 		let channel = rband.default_channel ?? "auto";
 
+		/*
+		 * Wide channels are only usable with a matching regulatory
+		 * domain, so the generated default stays at 80 MHz unless the
+		 * board declares the band's width in board.json (see
+		 * ucidef_set_wireless_width()).
+		 */
 		let width = band.max_width;
+		let def_width = board.wlan.defaults?.widths?.[lc(band_name)];
 		if (band_name == "2G")
 			width = 20;
+		else if (def_width)
+			width = min(+def_width, band.max_width);
 		else if (width > 80)
 			width = 80;
 

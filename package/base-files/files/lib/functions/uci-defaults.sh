@@ -689,6 +689,25 @@ ucidef_set_country() {
 	json_select ..
 }
 
+ucidef_set_wireless_width() {
+	local band="$1"
+	local width="$2"
+
+	case "$band" in
+	2g|5g|6g) ;;
+	*) return;;
+	esac
+	[ -z "$width" ] && return
+
+	json_select_object wlan
+		json_select_object defaults
+			json_select_object widths
+				json_add_string "$band" "$width"
+			json_select ..
+		json_select ..
+	json_select ..
+}
+
 ucidef_set_wireless_mac_count() {
 	local band="$1"
 	local mac_count="$2"
