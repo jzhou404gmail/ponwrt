@@ -51,6 +51,8 @@
 | 19 | `airoha/an7583` | **内核态 AES 之前一个都没开**：开启 ARMv8 CE（AES 全模式 + GHASH/PMULL）、`CRYPTO_CBC`、`CRYPTO_AUTHENC`、AF_ALG，并编上 EIP-93（§2.8） | 硬件修复 |
 | 20 | `configs/an7583` | EIP-93 驱动与三个用户态包（`kmod-crypto-hw-eip93` / `kmod-cryptodev` / `libopenssl-devcrypto`），包数 239 → 245 | 默认值修复 |
 | 21 | `docs` | AN7583 硬件加密核查（含两个可复现探针 `an7583-aes-check.c` / `an7583-eip93-probe-test.c`）与 XG-040G-MF **2.5G 口排查记录** | 文档 |
+| 22 | `airoha/patches-6.18` | **NPU 固件版本暴露到 sysfs**（`950-npu-expose-fw-version-sysfs.patch`，§3）：用户态不必再去 grep 启动日志拿版本号 | 功能补充 |
+| 23 | `configs/release.config` | 把 `luci-app-airoha-npu` 加进发布配置（§5.4） | 默认值 |
 
 ---
 
