@@ -1,11 +1,12 @@
 # PonWrt（jzhou404gmail fork）
 
-[English](README.md) | **简体中文**
+[主页（中文）](README.md) | [English](README.en.md) | **详细改动记录（本文件）**
 
 本仓库是 [pbs05/ponwrt](https://github.com/pbs05/ponwrt) 的个人 fork，用于在
 **Airoha AN7581 / AN7583 系列 PON 光猫**上实机调试、并把调出来的修复固化回源码树。
 
-上游 README 与 `README_zh.md` 保持原样未改，本文件只记录**这个 fork 相对上游多出来的东西**：
+上游 `README.md` 的英文原文已移到 [`README.en.md`](README.en.md)（`README.md` 现在是中文主页），
+上游 `README_zh.md`（中文翻译）保持原样未改。本文件只记录**这个 fork 相对上游多出来的东西**：
 每一处硬件修复的**现象、根因、证据和验证方法**，以及一套"不破坏增量编译"的编译入口。
 
 > **本 fork 的基线**：上游 `c3b518baec`（`firewall4: include transparent bridge ports in flowtable`），
@@ -1042,6 +1043,9 @@ grep -n 'gpio4[3-6]' target/linux/airoha/dts/an7581-fiberhome-hg5585f-*.dtsi   #
 ## 9. 目录导览（本 fork 新增部分）
 
 ```
+README.md                                     中文主页（本 fork；英文原文已移到 README.en.md）
+README.en.md                                  英文页（上游 README.md 的英文原文 + 本 fork 概览）
+README.zh-CN.md                               本文件：相对上游的全部改动与取证记录
 build.sh / build-watch.sh / build-live.sh     编译入口与两种进度观察
 verify-images.sh                              刷机前产物体检（FIT 内部结构/内核 cpio/体积）
 docs/verify-fit.py                            verify-images.sh 的 FIT 解析内核部分
