@@ -40,6 +40,12 @@
 | 10 | `docs` | NPU 移植说明、IPTV 组播指南、PON 掉线采样脚本、渲染回归测试 | 文档 |
 | 11 | `feeds.conf.default` | 注释形式记录可选的 PassWall feed | 说明 |
 | 12 | `airoha/an7581` | **无线默认值（带无线的三款机型统一）**：国家码 CN、5G 160MHz、2.4G/5G 各自 SSID（`ImmortalWrt` / `ImmortalWrt_5G`）、默认 WPA2-PSK 密钥 `12345678` | 默认值修复 |
+| 13 | `feed-patches` | **上游 feed 补丁机制**：`feeds/` 不入库，改在上游驱动里的修复以补丁形式存 `feed-patches/`，`build.sh` 编译前幂等套用（§5.2.1） | 工具 |
+| 14 | `pon_drivers`（feed 补丁） | **EPON 上 `pon0-online` 永远不亮**（EPON 侧 `service_ready` 无人置 1）→ 改用"LLID 注册完成"作为 service ready | 硬件修复 |
+| 15 | `pon_drivers`（feed 补丁） | **新增 `pon0-signal` 触发器**：有光常亮、断纤闪烁，并把 8 个机型的光信号灯改绑到它（§2.7.2） | 功能修复 |
+| 16 | `airoha/base-files` | **「上网」灯 = 真实上网状态**：`pon-internet-led` 周期探测 well-known 站点，通就常亮、连续失败即灭；`/etc/init.d` + iface hotplug 拉起（§2.7.3） | 功能修复 |
+| 17 | `docs` | `pon-led-diag.sh`：面板灯取证脚本（触发器/亮度/线路状态/service_ready/OAM 认证 + 逐个点亮对面板） | 文档 |
+| 18 | `verify-images.sh` | **产物体检闸**（+ `build.sh` 自动调用与内核自愈）：抓"体积翻倍 / 普通内核被 initramfs 内核顶替 / 截断"这类**能编译但不能刷**的产物（§5.5，真实事故复盘） | 工具 |
 
 ---
 
@@ -286,6 +292,144 @@ iw dev phy1-ap0 info | grep -E "channel|width"        # width: 160 MHz
 > `HE80`/空国家码/单 SSID/`none`，`max_width=80` 时按 80 截断），
 > 但**默认值改动本身还没上机**，按 §6.2 验一行即可。
 
+### 2.7 面板「光信号」/「上网」两个灯的语义与实现 `[实测]`+`[待上机]`
+
+**适用机型**：所有 airoha 机型 —— 面板前四个灯的丝印与用途各机型一致：
+`电源` / `PON(注册)` / `光信号` / `上网`。本节的结论在 **EPON 线路**上取证（联通 10G EPON）。
+
+#### 2.7.1 硬件事实（先把"这盏灯到底是什么"钉死）
+
+| 面板灯 | 丝印 | 颜色 | 设备树 / sysfs | 原厂 LED 表（`userfs/7581ptled.conf`） |
+|---|---|---|---|---|
+| 1 | 电源 | 绿（CU）/ 蓝（CT） | GPIO13 `blue:power` | `LED_TR68_PWR_*` → gpio 13 |
+| 2 | PON | 绿 | GPIO14 `blue:wan` | `LED_XPON_STATUS` → gpio 14 |
+| 3 | 光信号 | **只有一个红脚** | GPIO16 `red:wan` | `LED_XPON_LOS_ON/STATUS` → **都是 gpio 16** |
+| 4 | 上网 | 绿 | GPIO5 `blue:wan-online` | 该表写 gpio 1，与 §2.3 真机逐脚驱动验证的 GPIO5 不同（表里其余脚与真机一致） |
+
+**关键结论**：第 3 个「光信号」灯是**单色红灯**，原厂 LED 表里 `LOS` 语义也只有一个脚，
+不存在"信号正常亮绿灯"的灯珠 —— 所以"正常时绿色常亮"在这块硬件上做不到。
+（先用 `docs/pon-led-diag.sh walk` 逐个点亮对一遍面板，颜色与位置一目了然。）
+
+#### 2.7.2 「光信号」灯：有光常亮、断纤闪烁 `[待上机]`
+
+**需求**：光纤插好、光路正常 → 红灯**常亮**；断纤/无光 → 红灯**闪烁**。
+
+**实现**：驱动新增一个触发器 **`pon0-signal`**（`feed-patches/pon_drivers/airoha-xpon/0002-*.patch`）：
+
+| 线路状态 | `pon0-signal`（本 fork 采用） | `pon0-los`（传统语义，仍保留） |
+|---|---|---|
+| 有光 | **常亮** | 灭 |
+| 无光、线路在跑 | **500ms 闪烁** | 500ms 闪烁 |
+| 线路没跑（PON 口没起来） | 灭 | 灭 |
+
+并把 8 个机型的设备树从 `pon0-los` 改绑到 `pon0-signal`（HG5585F / HG5382A / ZN504XG-D /
+ZN515XG-D / UNG00A / XG-040G-MF / XG-040G-MD / HM-2004-DU / XG2010G），这样各机型行为一致。
+
+> ⚠️ **这是本 fork 故意偏离行业惯例的一处**：常规光猫"光信号"灯是**灭 = 正常**、红闪 = 断纤。
+> 这里改成"常亮 = 有光"，好处是面板上"光路好的"这件事有正指示（否则正常时这盏灯全黑，
+> 看起来像坏了一样）。
+> **想回传统语义**：把设备树里那行改回 `linux,default-trigger = "pon0-los";` 即可
+> （8 处，`grep -rn pon0-signal target/linux/airoha/dts/`）。
+> 注意判据是"**有没有光**"而不是"注册没注册"：光有问题（灯闪）和注册有问题（第 2 个灯
+> 在闪）是两件事，分开看才好定位。
+
+#### 2.7.3 「上网」灯：真实探测"能不能上网" `[待上机]`
+
+**需求**：不看 PON，真正检测 INTERNET 连通性 —— 能打开 well-known 站点（例如百度）就绿灯常亮。
+
+**为什么不能靠 PON**（两层，`[实测]` 代码定位）：
+
+1. 出厂绑的触发器 `pon0-online` 判据是 `xpon->service_ready`，而这个变量在两类线路上来源不同：
+   * **XG(S)-PON / GPON**：`airoha-xpon-ploam.c` 在延迟数据通道补挂成功后置 1
+     （调用它的只有 `airoha-xpon-main.c` 的**非 EPON 分支**）→ 灯会亮；
+   * **EPON**：内核侧**永远不写 1**（`airoha-xpon-epon.c` 只在重置时写 0），唯一写入方是
+     用户态 `airoha-pond`，条件为 `ctc_snapshot.authentication == "accepted"`
+     —— **只有 OLT 走完 CTC 认证**才会写。只跑 MPCP + PPPoE 的线路上恒为 0 ⇒ 灯必灭。
+2. 就算会亮，"PON 注册成功"也不等于"能上网"：PPPoE 可能拨不上、路由/DNS 可能不通。
+
+**实现**（`target/linux/airoha/base-files/`）：
+
+```
+usr/libexec/pon-internet-led                 # 全部逻辑：探测 + 点灯
+etc/init.d/pon-internet-led                  # procd 常驻循环（START=96）
+etc/hotplug.d/iface/30-pon-internet-led      # 会话起来/断开的即时同步
+```
+
+判据：
+
+```
+http://connect.rom.miui.com/generate_204          ┐ 先试 204 端点（响应体最小）
+http://www.baidu.com/                             ├ 任一个通 = 能上网 → 绿灯常亮
+http://connectivitycheck.platform.hicloud.com/generate_204 ┘
+ping 223.5.5.5 / 119.29.29.29                     # HTTP 全失败再 ping 兜底（有些线路封 ICMP/HTTP）
+```
+
+* 通 → 立刻点亮；连续失败 `failures` 次（默认 2）才熄灭 —— 滞回，避免抖动闪灯。
+* PPPoE 会话断开时 hotplug 立刻灭灯（不用等探测超时）；会话起来 3 秒后立刻补探一次。
+* 灯的控制方式：把 `/sys/class/leds/*:wan-online` 的 `trigger` 置 `none`，直接写 `brightness`
+  —— 内核触发器不再抢这盏灯（`stop` 时会把灯还给内核的 `pon0-online`）。
+
+配置（可选，缺省即下面的值）：`/etc/config/pon-led`
+
+```sh
+cat >/etc/config/pon-led <<'EOF'
+config internet 'internet'
+	option enabled '1'
+	option interval '30'      # 探测周期（秒）
+	option failures '2'       # 连续失败几次才灭灯
+	option timeout '5'        # 单个请求超时（秒）
+	option urls 'http://connect.rom.miui.com/generate_204 http://www.baidu.com/ http://connectivitycheck.platform.hicloud.com/generate_204'
+	option ping_hosts '223.5.5.5 119.29.29.29'
+EOF
+/etc/init.d/pon-internet-led restart
+```
+
+关掉它（把灯还给内核触发器，退回"PON 侧就绪"语义）：
+
+```sh
+/etc/init.d/pon-internet-led stop && /etc/init.d/pon-internet-led disable
+```
+
+**驱动侧那处 EPON 修复仍然保留**（`0001-*.patch`）：`pon0-online` 在 EPON 上不再是死灯，
+没装/关掉上面这个用户态服务时，这盏灯仍然反映"PON 侧就绪"。
+
+#### 2.7.4 上机自检
+
+```sh
+sh docs/pon-led-diag.sh                # 取证：LED/触发器/亮度、线路状态、service_ready、OAM 认证、代理
+sh docs/pon-led-diag.sh walk 4         # 逐个点亮，确认"哪个 sysfs 灯 = 面板哪个位置、什么颜色"
+
+cat /sys/class/leds/red:wan/trigger           # 期望 [pon0-signal]
+cat /sys/class/leds/blue:wan/trigger          # 期望 [pon0-registration]
+cat /sys/class/leds/blue:wan-online/trigger   # 期望 [none]（被用户态接管）
+
+pon-internet-led status                # 配置 + 上次探测结果（/var/run/pon-internet-led.state）
+pon-internet-led once                  # 立刻探一次：online/offline 一目了然
+logread | grep pon-internet-led        # 每次 online/offline 切换都有日志
+
+# 行为验证
+拔光纤   → 第 3 个灯红闪；第 2 个灯灭；第 4 个灯 30 秒内灭
+插光纤   → 第 3 个灯常亮；注册后第 2 个灯绿灯常亮；能上网后第 4 个灯绿灯常亮
+ifdown wan → 第 4 个灯立刻灭；ifup wan → 3 秒后补探，通则重新点亮
+```
+
+#### 2.7.5 证据
+
+```sh
+# 原厂固件里的 LED 表（本机 CU rootfs 里 dump 出来的）
+#   userfs/7581ptled.conf —— 面板 LED 号 → GPIO
+#   LED 64/65 LED_XPON_STATUS  → gpio 14（PON 注册灯）
+#   LED 66/67 LED_XPON_LOS_*   → gpio 16（光信号，只有这一个脚）
+#   LED 40/41 LED_TR68_PWR_*   → gpio 13（电源）
+#   LED 42    LED_PHY_TX_POWER_DISABLE → gpio 38
+
+# 驱动侧判据（feeds/pon_drivers/airoha-xpon/src/airoha-xpon-leds.c）
+#   pon0-registration : EPON 看 mpcp_state==REGISTERED / XG(S)PON 看 O5
+#   pon0-los          : 线路在跑但没光 → 500ms 慢闪；有光 → 灭（传统语义）
+#   pon0-signal       : 有光 → 常亮；线路在跑但没光 → 500ms 慢闪（本 fork 采用）
+#   pon0-online       : 线路在跑 + 有光 + service_ready（EPON 上按注册判据）
+```
+
 ---
 
 ## 3. LuCI NPU 面板（`luci-app-airoha-npu`）
@@ -408,6 +552,29 @@ cd ponwrt
 ./scripts/feeds install -a
 ```
 
+#### 5.2.1 上游 feed 的补丁（`feed-patches/`）
+
+`pon_drivers` / `pon_userspace` 这些 feed 是上游仓库（`feeds.conf.default` 里的 `src-git`），
+而 **`feeds/` 目录不入库**。所以"改在上游驱动里的修复"如果只改 `feeds/` 检出，一次
+`./scripts/feeds update -a` 就没了，`git log` 里也看不到。本 fork 的做法：
+
+```
+feed-patches/
+├── apply.sh                                  # 幂等套用脚本
+└── pon_drivers/airoha-xpon/
+    ├── 0001-*.patch                          # EPON 上 pon0-online 不再死灯（§2.7.3）
+    └── 0002-*.patch                          # 新增 pon0-signal 触发器（§2.7.2）
+```
+
+* `build.sh` 在 **make 之前**自动调用 `feed-patches/apply.sh`：已套过的跳过，没套的套上，
+  套不上（上游改过同一段）会明确报错而不是默默继续。
+* 一个 feed 里叠着多个补丁时，后面的补丁会改动前面补丁的上下文行，所以"已套用"的判定
+  用 `git apply --check --reverse`（必要时缩小上下文 `-C1`），不是简单比字符串。
+* 刚套上某个补丁时，脚本会同时删掉该包在 `build_dir/` 里的旧拷贝 —— OpenWrt 只在
+  prepare 阶段把本地源码**拷贝**进去，源码改了不删旧拷贝，就会出现"改了源码但编译用的
+  还是旧文件"。
+* 手动查看/套用：`./feed-patches/apply.sh --check` / `./feed-patches/apply.sh`。
+
 **分支政策：只保留一条主线**。`master` 就是这条线 —— 上游 `pbs05/ponwrt` + 本 fork 的
 全部改动，**编译一律用它**：
 
@@ -436,6 +603,8 @@ JOBS=2 ./build.sh          # 内存紧张时降并行
 `build.sh` 的设计原则是**只做加法、绝不改动构建输入**：不传任何额外 make 变量、
 不重写 `.config`，保证 OpenWrt 的增量判断完全按你原来那套走。raw make 输出全部进
 `tmp/build.log`，控制台只打印进度块（阶段 / 里程碑 / 正在编译什么）。
+编译前会先跑一遍 `feed-patches/apply.sh`（§5.2.1），这一步是幂等的，没补丁要套时
+什么都不做。
 
 `--config=<档>` 会先自动备份现有 `.config`，并且**带掉包保护**：
 如果新配置的包数量比原来少 20% 以上就中止并自动还原。
@@ -495,6 +664,87 @@ AN7583 目标（`nokia_xg-040g-mf`、`nokia_xg-040g-mf-ubi`）用 `configs/an758
 > 绕过办法是写 `TOPDIR/version`：`printf 'r0-c3b518baec\n' > version`，
 > 编完**记得删掉**，否则会一直盖住真实版本号。
 
+### 5.5 产物体检 `verify-images.sh` —— 为什么必须有这道闸 `[实测]`
+
+**事故（2026-10-16）**：一次构建出的 `.itb` 刷进去**起不来，无限重启**。串口（U-Boot）原话：
+
+```
+   Uncompressing Kernel Image to 8a000000
+Error: inflate() returned -5
+Image too large: increase CONFIG_SYS_BOOTM_LEN
+Must RESET board to recover
+Resetting the board...
+```
+
+同时那个 `.itb` 从正常的 **58 MiB 涨到 117 MiB**（"在 .config 没变的前提下体积翻倍"）。
+
+**根因**：`build_dir/target-*/linux-airoha_an7581/Image`（sysupgrade 镜像打包用的"普通内核"）
+**就是 initramfs 内核** —— 它内含整个 rootfs 的 180 MiB cpio（`CONFIG_INITRAMFS_COMPRESSION_NONE=y`），
+所以内核 194 MiB、gzip 后 71 MiB、整个 FIT 117 MiB。证据（md5 / 魔数都能直接复现）：
+
+```sh
+# 1) 打包用的"普通内核"和 initramfs 内核是同一个文件
+md5sum build_dir/target-*/linux-airoha_an7581/Image \
+       build_dir/target-*/linux-airoha_an7581/Image-initramfs
+#   正常：Image 13 MiB（3284b5cc…）/ Image-initramfs 194 MiB（a7584721…），两个不一样
+#   出事：两个 md5 一模一样
+
+# 2) 内核树还留在 initramfs 配置上（每次构建结束时都长这样，本身不算错，
+#    但它 + 中途掐断 = 上面那个后果）
+grep INITRAMFS_SOURCE build_dir/target-*/linux-airoha_an7581/linux-*/.config
+```
+
+**怎么变成这样的**：内核构建树被一次**被中断的构建**（那条命令被外部 10 分钟超时 SIGTERM 掉）
+留在了 initramfs 配置状态；下一次**增量**构建里，"普通内核"那一步认为产物是最新的，
+直接把已经是 initramfs 内核的 `arch/arm64/boot/Image` 拷成了 `$(KERNEL_BUILD_DIR)/Image`，
+镜像打包阶段照单全收 ⇒ 产出一个"能编译出来、但根本不能刷"的固件。
+（那次产物连 arm64 头部自报的 `image_size` 都比文件本身大 —— 也是被中途掐断的痕迹。）
+
+**防线**：`verify-images.sh`（+ `docs/verify-fit.py`）**每次构建后自动跑**，任何一条不过就让
+整次构建判为失败 —— 不会再打印"构建完成"，更不会让你拿到一个能刷的假象。
+
+```sh
+./verify-images.sh                     # 手动体检 bin/targets 下所有 .itb
+./verify-images.sh <文件或目录...>      # 只体检指定产物
+```
+
+它逐个 `.itb` 检查：
+
+| 检查 | 抓的是哪一类问题 |
+|---|---|
+| `.itb` 总体积（sysupgrade ≤ 95 MiB / recovery ≤ 70 MiB） | 体积翻倍 |
+| 解压内核后 **不许出现 rootfs 里的文件**（`etc/openwrt_release` / `lib/apk/packages` / `etc/config/network`） | **普通内核被 initramfs 内核顶替**（本次事故） |
+| 内核里有 arm64 `ARM\x64` 魔数、头部 `image_size` 不离谱 | 打进去的根本不是内核 / 产物被截断 |
+| 解压后内核大小在 8–80 MiB（正常 13.2 MiB，出事 185 MiB） | 内核里塞了不该塞的东西 |
+| rootfs 是 squashfs（`hsqs`）且 ≥ 5 MiB | rootfs 缺了/坏了 |
+| 同机型 **sysupgrade 内核 ≠ recovery 内核** | 上面那条最直接的指纹 |
+
+**自愈**：如果体检失败的原因属于"内核那一类"（`verify-images.sh` 退出码 **2**），
+`build.sh` 会自动清掉 `build_dir/target-*/<board>_<subtarget>` 并重编一次 ——
+你不用手动救，但要知道它为什么慢了一轮。
+
+**手工修法**（体检让你自己修时）：
+
+```sh
+rm -rf build_dir/target-*/linux-airoha_an7581     # 或对应的 board 目录
+./build.sh
+```
+
+**教训（写给以后）**：
+
+1. **别掐断正在跑的构建**。`Ctrl-C` / `kill` 掉一次 `make`，可能把内核树留在
+   initramfs 配置上，进而产出上面那种"能编译、不能刷"的固件。要停就停，
+   但**恢复构建后必须过一次 `verify-images.sh` 再刷**。
+2. **"能编出来" ≠ "能刷"**。体积、内核里的 cpio、sysupgrade/recovery 内核是否同一份，
+   都是可以自动判定的 —— 所以把它们写成了自动闸，而不是靠人眼看串口。
+3. 事后核对：`verify-images.sh` 全 `ok` + 体积与已知可用版本同量级（AN7581 sysupgrade ≈ 58 MiB）。
+4. **判据要用不会误报的指纹**：一开始想用 cpio 魔数 `070701` 判"内核里塞了 rootfs"，
+   结果好内核也在同一个偏移碰巧命中（十几 MB 二进制里 6 字节串撞车很正常，附近还有
+   个孤立的 `TRAILER!!!`），改成"rootfs 里必然有、内核里必然没有的路径名"才判得准 ——
+   体检脚本自己也要按这个标准写，否则会把人吓去乱改。
+5. 那次坏产物留了一份当回归样本：`tmp/broken/*.itb`（117 MiB，gitignore 里的 tmp/，
+   随时可删）。改完体检脚本拿它跑一遍，应当**失败且退出码为 2**。
+
 ---
 
 ## 6. 刷机与刷后自检
@@ -529,6 +779,9 @@ dmesg | grep -i "NPU fw version"
 | lan1 冷启动一致性 | HG5585F-CT | `reboot`（热重启）后立刻 `cat /sys/class/net/lan1/carrier`，应看到 `1`；`dmesg \| grep -i "GPY211\|Clause 45"` 不应出现 Generic Clause 45 PHY |
 | 无线默认值（CN / 160MHz / SSID / WPA2-PSK） | HG5585F-CT / HG5585F-CU / ZN515XG-D | `jsonfilter -i /etc/board.json -e '@.wlan.defaults'` 应见 `country:"CN"`、`widths.5g:"160"`、`ssids.2g/5g`；`uci show wireless \| grep -E "country\|htmode"` 应见 `country='CN'` 与 `htmode='HE160'`；`uci show wireless \| grep -E "ssid\|encryption\|key"` 应见 2.4G=`ImmortalWrt` / 5G=`ImmortalWrt_5G`、两侧 `encryption='psk2'` 且 `key='12345678'`；`iw dev phy1-ap0 info \| grep width` 应见 `width: 160 MHz`；手机能搜到**两个** SSID，用 `12345678` 能连上（随后自己去 LuCI 改密码） |
 | IPTV 组播 | 任意 | §4 的两条命令 |
+| 「上网」灯（第 4 个，真实上网探测） | 所有 airoha 机型 | ① `pon-internet-led status`（配置 + 上次结果）；② `pon-internet-led once` 应为 `online (via …)`；③ `cat /sys/class/leds/*:wan-online/trigger` 期望 `[none]`（用户态接管）；④ 拔网线/`ifdown wan` → 灯立刻灭，`ifup wan` → 3 秒后补探并重新点亮；⑤ `logread \| grep pon-internet-led` 有 online/offline 切换日志 |
+| 「光信号」灯（第 3 个） | 所有 airoha 机型 | ① `cat /sys/class/leds/*:wan/trigger` → `[pon0-signal]`（红的那盏）；② 插着光纤 → **红灯常亮**；拔光纤 → **红灯 500ms 闪**；③ `sh docs/pon-led-diag.sh walk 4` 确认该位置就是 GPIO16 那盏红灯。想回到"灭=正常"的老语义：把设备树那行改回 `pon0-los` |
+| 「PON」灯（第 2 个，注册） | 所有 airoha 机型 | 注册成功应绿灯常亮：`cat /sys/class/leds/*:wan/trigger` → `[pon0-registration]` |
 
 > LuCI 的 JS 带 `?v=` 版本号，而那个版本号来自 luci-base 不是本包，**刷完请硬刷新浏览器
 > （Ctrl+Shift+R）**，否则可能仍在用缓存的旧 `status.js`。
@@ -567,6 +820,9 @@ cp docs/luci-app-airoha-npu-port/01_leds.before \
 | 2 | §2.3 的 HG5585F-CU 四个 LAN 灯 | 已改用上游 `91077e9a6b` 的方案（GPIO43-46 gpio-leds + `01_leds` netdev 触发），该方案由上游作者在真机 CU 上验证。本 fork 原先的 PHY LED0 mux 路线已撤销；仍需按 §6.2 上机确认灯确实亮 |
 | 3 | §2.4 的 HG5585F-CT GPY211C | 结论基于复位时序竞态分析，需在真机上做一次热重启核对 |
 | 4 | 机型覆盖 | 修复的根因取证与刷机回归以 **ZN504XG-D** 为主力机型（UNG00A 的口序结论有换线实测记录）。其余 11 个机型已一起编译出固件，但未逐个上机验证，按 §6.2 自检即可 |
+| 5 | §2.7.3 的「上网」灯（主动探测） | 逻辑写好并编译进镜像，**等实机确认**：能上网 → 常亮，断网/拔纤 → 30 秒内灭；`pon-internet-led once` 可手动验证一次探测。若你常用的站点被列在探测表之外，改 `/etc/config/pon-led` 的 `urls` 即可 |
+| 6 | §2.7.2 的「光信号」灯（有光常亮） | 驱动新增 `pon0-signal` 触发器 + 8 个机型改绑，**等实机确认**：插纤常亮、拔纤闪。这是**故意偏离行业惯例**的一处（常规是"灭=正常"），想回去见 §2.7.2 的改法。另外这盏灯硬件上只有红光，不存在"正常亮绿灯" |
+| 7 | §2.7 的 feed 驱动补丁（两个） | 改动在 `feed-patches/pon_drivers/airoha-xpon/`，套用/回退见 §5.2.1；`build.sh` 会自动套。`./feed-patches/apply.sh --check` 可随时看状态 |
 
 **明确不支持**：**MT7916 不能用 NPU 加速 WiFi 流量**。NPU 的 WiFi 卸载代码只在
 **mt7996** 驱动里，mt7915 目录 0 处 airoha/npu 引用；NPU 固件包也只有 MT7992 / MT7996 两种。
@@ -618,6 +874,8 @@ grep -n 'gpio4[3-6]' target/linux/airoha/dts/an7581-fiberhome-hg5585f-*.dtsi   #
 
 ```
 build.sh / build-watch.sh / build-live.sh     编译入口与两种进度观察
+verify-images.sh                              刷机前产物体检（FIT 内部结构/内核 cpio/体积）
+docs/verify-fit.py                            verify-images.sh 的 FIT 解析内核部分
 package/luci-app-airoha-npu/                  NPU/Frame Engine 面板（1.2.0-r3）
 target/linux/airoha/patches-6.18/
     950-npu-expose-fw-version-sysfs.patch     NPU 版本/核数 sysfs
@@ -630,15 +888,31 @@ target/linux/airoha/an7581/base-files/etc/board.d/
     03_wireless                               带无线机型统一默认值：国家码 CN、5G 160MHz、
                                               双 SSID（ImmortalWrt / ImmortalWrt_5G）、
                                               默认 WPA2-PSK（密钥 12345678）
+feed-patches/apply.sh                         上游 feed 补丁（幂等）套用脚本，build.sh 自动调
+feed-patches/pon_drivers/airoha-xpon/
+    0001-*.patch                               EPON 上 pon0-online 触发器不再死灯
+    0002-*.patch                               新增 pon0-signal 触发器（有光常亮/断纤闪）
+target/linux/airoha/base-files/usr/libexec/
+    pon-internet-led                           「上网」灯 = 主动探测互联网（通=常亮、连续失败=灭）
+target/linux/airoha/base-files/etc/init.d/
+    pon-internet-led                           procd 常驻探测循环（START=96）
+target/linux/airoha/base-files/etc/hotplug.d/iface/
+    30-pon-internet-led                        PPPoE 起来/断开时立刻补探或灭灯
 docs/luci-app-airoha-npu-port/README.md       移植全过程、根因取证、逐机型核对
 docs/iptv-udpxy-omcproxy-guide.md             udpxy + omcproxy 完整指南（已脱敏）
 docs/pon-link-watch.sh                        PON 光功率/温度/注册计数器定时光采样
+docs/pon-led-diag.sh                          面板灯取证：触发器/亮度/线路状态 + 逐个点亮对面板
 docs/luci-app-airoha-npu-port/tests/          渲染回归测试 + 真机 fixture（MAC 已占位）
 ```
 
 其他有用的调试脚本：[`docs/pon-link-watch.sh`](docs/pon-link-watch.sh) 周期采样
 注册计数器（`deregisters` / `reregisters` / `register_nacks` / `registered_lifetime_ms`）
 与光前端温度 —— 这些**只存在于运行内存**里，设备一重启就全没了，掉线那一刻不记录事后只能猜。
+
+面板灯取证用 [`docs/pon-led-diag.sh`](docs/pon-led-diag.sh)：`sh /tmp/pon-led-diag.sh`
+先打印 LED 类设备/触发器/亮度、PON 线路状态、`service_ready`、用户态 OAM 代理与 CTC 认证
+状态；`sh /tmp/pon-led-diag.sh walk 4` 会**逐个点亮**每个 LED（每个 4 秒，结束后自动把
+触发器恢复原样），用来确认"哪个 sysfs 灯 = 面板哪个位置、什么颜色"。§2.7 的结论就靠它取证。
 
 ---
 
