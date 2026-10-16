@@ -48,3 +48,6 @@ git-src
 # 与固件无关的本机运维脚本
 /clone-sda/
 /shutdown-analyze.sh
+
+# python 缓存（体检脚本被 import 时会生成）
+__pycache__/

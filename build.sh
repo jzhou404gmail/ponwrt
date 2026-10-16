@@ -223,6 +223,7 @@ silently_failed_packages() {
 
 RETRY_MAX=2
 ATTEMPT=0
+KERNEL_REBUILT=0
 
 while :; do
 	ATTEMPT=$((ATTEMPT + 1))
@@ -239,7 +240,36 @@ while :; do
 	# 编译已结束：收尾与耗时由下面负责，cleanup() 不再按"被中断"处理
 	MAKE_PID=""
 
+	# ---- 编译成功：再过一道产物体检（verify-images.sh） ----
+	# 只编译得出来的产物不等于能刷：内核构建树被"被中断的构建"留在 initramfs 配置上时，
+	# sysupgrade 镜像里会塞进 initramfs 内核（体积翻倍、U-Boot inflate 失败 → 无限重启）。
+	# 见 verify-images.sh 顶部的复盘。
 	if [ "$RC" -eq 0 ]; then
+		echo
+		echo "==> 产物体检（verify-images.sh）：确认每个 .itb 都能刷"
+		# 注意：必须先把退出码存下来再判断 —— if cmd; then ...; fi 这个复合命令
+		# 自身返回 0，$? 拿不到 cmd 的真实状态。
+		./verify-images.sh
+		VRC=$?
+		if [ "$VRC" -eq 0 ]; then
+			break
+		fi
+
+		if [ "$VRC" -eq 2 ] && [ "$KERNEL_REBUILT" -eq 0 ]; then
+			KERNEL_REBUILT=1
+			BOARD=$(sed -n 's/^CONFIG_TARGET_BOARD="\(.*\)"/\1/p' .config)
+			SUBTARGET=$(sed -n 's/^CONFIG_TARGET_SUBTARGET="\(.*\)"/\1/p' .config)
+			echo
+			echo "!! 内核产物不对（这一类是可以自愈的）：清掉内核构建树重新编一遍"
+			echo "!! 目录: build_dir/target-*/${BOARD}_${SUBTARGET}"
+			rm -rf build_dir/target-*/"${BOARD}_${SUBTARGET}"
+			RC=1
+			continue
+		fi
+
+		echo
+		echo "!! 产物体检不过 —— 这次构建的镜像**不要刷**（上面有具体原因）" >&2
+		RC=1
 		break
 	fi
 
