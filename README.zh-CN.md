@@ -11,8 +11,9 @@
 > **本 fork 的基线**：上游 `c3b518baec`（`firewall4: include transparent bridge ports in flowtable`），
 > 在此之上是本 fork 自己的改动清单（见 §1）。
 >
-> **2026-10-16 已同步上游 `c3b518baec..a57faf93c6`**（6 个提交：新增 H3C HM-2004-DU 机型、
-> HG5585F 复位键与面板 LED 修复、EN8811H 复位时序、FIT/ITS 镜像等）。合并文本上干净，
+> **2026-10-16 已同步上游 `c3b518baec..a57faf93c6`**（7 个提交 = 4 个实质提交 + 3 个 merge：
+> 新增 H3C HM-2004-DU 机型、HG5585F 复位键与面板 LED 修复、EN8811H 复位时序、FIT/ITS 镜像等）。
+> 合并文本上干净，
 > 但有**两处语义取舍** git 不会替你决定，这次的取舍是"两处都跟着上游走"（细节见 §8.3）：
 >
 > | 项 | 决定 |
@@ -30,7 +31,7 @@
 |---|---|---|---|
 | 1 | `chore(gitignore)` | 忽略 `.config` 备份、原厂固件转储、本机运维脚本 | 仓库卫生 |
 | 2 | `build` | `build.sh` + `build-watch.sh` + `build-live.sh` 编译入口与进度观察 | 工具 |
-| 3 | `airoha/an7581` | **面板 LAN 灯触发器缺失**（ZN504XG-D / ZN515XG-D / Nokia MD & TF / UNG00A） | 硬件修复 |
+| 3 | `airoha/an7581`+`an7583` | **面板 LAN 灯触发器缺失**（ZN504XG-D / ZN515XG-D / Nokia MD & TF / UNG00A，以及 an7583 的 XG-040G-MF） | 硬件修复 |
 | 4 | `airoha/an7581` | **UNG00A 面板口序反转** + 启用 PHY1 LED0 | 硬件修复 |
 | 5 | `airoha/an7583` | XG-040G-MF 的 PHY LED 补 `function` / `function-enumerator` | 一致性 |
 | 6 | `airoha/an7581` | HG5585F-CU 四个 LAN 灯全灭 —— **已改为随上游 `91077e9a6b` 合并**，本 fork 只留一段防回归注释 | 已并入上游 |
@@ -46,6 +47,9 @@
 | 16 | `airoha/base-files` | **「上网」灯 = 真实上网状态**：`pon-internet-led` 周期探测 well-known 站点，通就常亮、连续失败即灭；`/etc/init.d` + iface hotplug 拉起（§2.7.3） | 功能修复 |
 | 17 | `docs` | `pon-led-diag.sh`：面板灯取证脚本（触发器/亮度/线路状态/service_ready/OAM 认证 + 逐个点亮对面板） | 文档 |
 | 18 | `verify-images.sh` | **产物体检闸**（+ `build.sh` 自动调用与内核自愈）：抓"体积翻倍 / 普通内核被 initramfs 内核顶替 / 截断"这类**能编译但不能刷**的产物（§5.5，真实事故复盘） | 工具 |
+| 19 | `airoha/an7583` | **内核态 AES 之前一个都没开**：开启 ARMv8 CE（AES 全模式 + GHASH/PMULL）、`CRYPTO_CBC`、`CRYPTO_AUTHENC`、AF_ALG，并编上 EIP-93（§2.8） | 硬件修复 |
+| 20 | `configs/an7583` | EIP-93 驱动与三个用户态包（`kmod-crypto-hw-eip93` / `kmod-cryptodev` / `libopenssl-devcrypto`），包数 239 → 245 | 默认值修复 |
+| 21 | `docs` | AN7583 硬件加密核查（含两个可复现探针 `an7583-aes-check.c` / `an7583-eip93-probe-test.c`）与 XG-040G-MF **2.5G 口排查记录** | 文档 |
 
 ---
 
@@ -59,7 +63,7 @@
 ### 2.1 2.5G 口"看着是死的"——其实灯从来没亮过 `[实测]`
 
 **机型**：`znxt_zn504xg-d`、`znxt_zn515xg-d`、`nokia_xg-040g-md-ubi`、
-`nokia_xg-040g-tf-ubi`、`unionman_ung00a`
+`nokia_xg-040g-tf-ubi`、`unionman_ung00a`，以及 an7583 的 `nokia_xg-040g-mf`（`-ubi` 同）
 
 **现象**：2.5G 口插网线后面板灯不亮，LuCI 里看着像死口。但内核日志里口其实好得很：
 
@@ -112,6 +116,21 @@ uci commit system && /etc/init.d/led restart
 
 **验证**：`cat /sys/class/leds/mt7530-0:0f:green:lan-1/trigger` 应显示 `[netdev]`，
 且同目录下出现 `device_name` / `link` / `link_2500` / `tx` / `rx`。
+
+> **an7583（XG-040G-MF）的类设备名和上面这些都不一样，单独说一句。**
+> 那颗 EN8811H 挂在 **SoC 自己的 MDIO 控制器**上（`mdio-bus@c8`，`scuclk` syscon 的子节点），
+> 不是 an7581 那种交换机内部的 `mt7530-0` 总线，于是 `led_compose_name()` 拼出来的名字带一长串前缀：
+>
+> ```
+> 1fb00000.system-controller:mdio-bus@c8-mii:0f:green:lan-1     ← 2.5G 口（EN8811H, PHY 0x0f）
+> mt7530-0:0a:green:lan-2                                       ← 面板 LAN2-4 仍在交换机总线上
+> ```
+>
+> 这个名字是从**运行中的机器** `/sys/bus/mdio_bus/devices/` 读出来的，不是推导的。写错一个字，
+> netdev 触发就会静默绑不上、灯照样不亮 —— 和上面那个"灯本来就是被 LED core 清零过"的坑叠在一起，
+> 表现完全一样，很难看出是名字写错。an7581 那批的 `01_leds` 是在 `fc5dd1c86b` 里补的，
+> **an7583 当时漏了**，后来单独补在 `target/linux/airoha/an7583/base-files/etc/board.d/01_leds`。
+> 完整排查过程（三个症状、三个各自的根因）见 `docs/xg-040g-mf-an7583-2p5g-fix.md`。
 
 > 附带提醒：`ethtool lan1` 报 `master-slave cfg: preferred slave` 是该 PHY 的硬件默认值。
 > 若对端也偏好 slave 且两端都是单端口设备，1000/2.5GBASE-T 的主从仲裁可能谈不下来。
@@ -427,6 +446,155 @@ ifdown wan → 第 4 个灯立刻灭；ifup wan → 3 秒后补探，通则重�
 #   （曾有一个 pon0-signal：有光 → 常亮；实机觉得别扭，已回退，见 §2.7.2）
 #   pon0-online       : 线路在跑 + 有光 + service_ready（EPON 上按注册判据）
 ```
+
+### 2.8 AN7583 的硬件 AES 一个都没开：CE 与 EIP-93 `[实测]`
+
+**机型**：`nokia_xg-040g-mf`、`nokia_xg-040g-mf-ubi`（AN7583）
+
+**现象**：手上这台 `op` 的 `/proc/crypto` 里一共只有 **13 个算法，全是 `software/generic`**：
+`ecb(aes)` 解析到 `ecb(aes-generic)`、`ghash` 到 `ghash-generic`，**连软件 `cbc(aes)` 都没有**
+（IPsec 直接没法用），更没有任何 CE / EIP-93 driver。
+
+**根因**：AN7583 这颗 Cortex-A53 **带** ARMv8 Crypto Extensions，但内核侧一个都没编：
+
+```
+# cat /proc/cpuinfo | head -4
+model name  : ARMv8 Processor rev 4 (v8l)
+Features    : fp asimd evtstrm aes pmull sha1 sha2 crc32 cpuid     ← aes / pmull / sha1 / sha2 都在
+CPU part    : 0xd03  (Cortex-A53)
+
+$ grep -E "^CONFIG_(CRYPTO|ARM64|KERNEL_MODE_NEON)" target/linux/airoha/an7583/config-6.18
+（没有任何 CE 选项；这份 config 与 an7581 的那份逐行 diff 为空）
+$ grep -rn "ARM64_CE\|AES_ARM64\|GHASH" target/linux/airoha/
+（空）
+```
+
+> **和 AN7581 的关键差异**：AN7581 那颗 A53 **没有** CE（`OPENSSL_armcap=0x1`，只有 NEON，
+> 所以 140G-MD 必须走 EIP-93）；AN7583 **有**，而且 CE 同时覆盖 AES 各模式 **+ GCM**。
+> 反过来 EIP-93 只有 ECB/CBC/CTR/DES/authenc、**没有 GCM/CCM**，所以在 AN7583 上它只是补充项。
+
+**一个真实踩过的坑**：an7583 的 `config-6.18` **曾经**有 `CONFIG_CRYPTO_DEV_EIP93=y`
+（从 6.12 抄 6.18 时带过来的），随后被上游 `ada7ded2f4`（`airoha: an7583: refresh kernel config`，
+跑的是 `make kernel_oldconfig`）**静默删掉**。原因在 `drivers/crypto/Kconfig`：
+
+```
+ 12: if CRYPTO_HW
+ …
+875:    source "drivers/crypto/inside-secure/eip93/Kconfig"
+878: endif # CRYPTO_HW
+```
+
+`CRYPTO_DEV_EIP93` 在 `if CRYPTO_HW` 里面 —— `CRYPTO_HW=n` 时这个符号**根本不可见**，写进片段
+也会在下次 `make defconfig` / `kernel_oldconfig` 时被丢掉。所以 **`CONFIG_CRYPTO_HW=y`
+不是可选项**。反观 `arch/arm64/crypto/Kconfig`（AES/GHASH 的 CE 选项）由 `crypto/Kconfig` 在
+`if ARM64` 下直接 source，**不受 `CRYPTO_HW` 门控**，可以直接写进片段。
+
+**修复**（只动 `an7583/config-6.18`，**an7581 一行没改** —— 那颗没 CE，编了也不注册）：
+
+```kconfig
+CONFIG_CRYPTO_AES_ARM64=y            # 标量汇编 AES（CE/NEON 的公共依赖）
+CONFIG_CRYPTO_AES_ARM64_BS=y         # bit-sliced NEON，A53 上比纯 C 快
+CONFIG_CRYPTO_AES_ARM64_CE=y         # ★ AES 走 ARMv8 AES 指令
+CONFIG_CRYPTO_AES_ARM64_CE_BLK=y     # ★ ECB/CBC/CTR/XTS 块模式
+CONFIG_CRYPTO_AES_ARM64_CE_CCM=y
+CONFIG_CRYPTO_AES_ARM64_NEON_BLK=y   # AES-NEON 模式层
+CONFIG_CRYPTO_CBC=y                  # 之前连软件 CBC 都没有，IPsec 必需
+CONFIG_CRYPTO_GHASH_ARM64_CE=y       # ★ PMULL → gcm(aes) 全硬件
+CONFIG_CRYPTO_AUTHENC=y              # authenc(hmac,cbc(aes)) → IPsec
+CONFIG_CRYPTO_HW=y                   # EIP-93 的前提（见上面那个坑）
+CONFIG_CRYPTO_DEV_EIP93=m
+# ↓ 下面两个是 hack 补丁引入的新符号，必须显式给值，
+#   否则 syncconfig 会因为 (NEW) 无值直接中断构建（第一次构建就踩了）
+CONFIG_CRYPTO_DEV_EIP93_AES_128_SW_MAX_LEN=512
+CONFIG_CRYPTO_DEV_EIP93_GENERIC_SW_MAX_LEN=256
+CONFIG_CRYPTO_USER_API_AEAD=y        # AF_ALG：把内核算法暴露给用户态
+CONFIG_CRYPTO_USER_API_HASH=y
+CONFIG_CRYPTO_USER_API_SKCIPHER=y
+```
+
+**故意没开的**：`CRYPTO_SHA3_ARM64`、`SM3_ARM64_CE`、`SM4_ARM64_*`、`CRYPTO_SHA512_ARM64_CE`
+需要 ARMv8.2 指令，A53 **不能开**。
+
+`configs/an7583.config`（种子配置带 `TARGET_MULTI_PROFILE` + `TARGET_PER_DEVICE_ROOTFS`，
+所以 `DEVICE_PACKAGES` 走 `select MODULE_DEFAULT_<pkg>`，写 `=y` 即可进各 profile 的 rootfs）：
+
+```
+CONFIG_PACKAGE_kmod-crypto-hw-eip93=y   # 自动带出 authenc / des / md5 / sha1 / sha256
+CONFIG_PACKAGE_kmod-cryptodev=y         # /dev/crypto
+CONFIG_PACKAGE_libopenssl-devcrypto=y   # 用内核 crypto API 的 openssl engine
+```
+
+`make defconfig` 后包数 **239 → 245**（只增不减）。
+
+**证据链**（三块，都是活体机器实测）：
+
+① **用户态其实早就在跑硬件 AES**，不需要任何改动 —— `CONFIG_OPENSSL_WITH_ASM=y` 让 libcrypto
+编进了 ARMv8 汇编，运行时按 `AT_HWCAP` 自动选 `aes_v8_*` / `gcm_ghash_v8`：
+
+```
+$ /tmp/aes-check            # 静态链 libcrypto.a，能打印内部能力位
+AT_HWCAP         : 0x8ff  asimd=1 aes=1 pmull=1 sha1=1 sha2=1
+OPENSSL_armcap_P : 0x3d   neon=1 aes=1 sha1=1 sha256=1 pmull=1     ← AN7581 上是 0x1
+aes-128-gcm : 569.7 MB/s      aes-128-cbc : 889.4 MB/s
+aes-256-gcm : 506.4 MB/s      chacha20-poly1305 : 199.4 MB/s
+
+$ /tmp/aes-check-dyn        # 动态链设备上装的 libcrypto.so.3
+aes-128-gcm : 568.5 MB/s    ← 与静态版一致 ⇒ 固件里那份库确实走 CE
+```
+
+GCM 570 MB/s（AN7581 同机实测只有 29 MB/s），且**比纯 NEON 的 ChaCha20-Poly1305（199 MB/s）还快**
+⇒ 确实是 AES 指令 + PMULL 在做。本机跑的 PassWall（sing-box / xray / shadowsocks-rust）与
+WireGuard 同样是运行时探测 HWCAP 的 Go/Rust 实现，**自动吃到 CE，无需改动**。
+
+② **内核 SHA-1/SHA-256 本来就已经是硬件**：6.18 把 arm64 SHA 的 CE 分支并进了 `lib/crypto`，
+用 static key 运行时探测（`cpu_have_named_feature(SHA2)`）。`/proc/crypto` 里名字仍显示
+`sha1-lib`，那只是 lib 实现内部按 static key 分流，**不代表软件**。
+（旧符号 `CONFIG_CRYPTO_SHA1_ARM64_CE` / `SHA2_ARM64_CE` 在 6.18 已不存在，
+OpenWrt `generic/config-6.18` 里那两行是陈旧条目。）
+
+③ **EIP-93 的硬件存在性是只读寄存器探针实测的**（`docs/an7583-eip93-probe-test.c`：
+只 `devm_platform_ioremap_resource` + `readl`，不注册算法、不依赖 authenc/des，
+所以能插进还没有这些符号的旧固件）：
+
+```
+$ insmod /tmp/eip93-probe-test.ko
+EIP93TEST: reg=[mem 0x1fb70000-0x1fb70fff] ctrl_stat=0x00000002 status=0x00040402
+           option_1=0xf08fe007 revision=0x0341a25d eip_no=0x5d hw_rev=3.4 patch=1
+EIP93TEST: ALGO_AES=1 ALGO_DES=1 ALGO_HASH=1 (option_1 bits)
+```
+
+`eip_no=0x5d` 就是 EIP-93（hw rev 3.4，"ies" 变体），DT 节点能正常绑定、寄存器可读、无总线异常。
+这次顺带也证实了旧内核为什么插不进完整驱动 —— 正是缺本次新增的那些符号：
+`crypto_authenc_extractkeys` / `des_expand_key` / `md5_zero_message_hash` / `sha224/256_zero_message_hash`。
+
+> **内核里唯一用到 AES 的地方是 PON PLOAM 换密钥**（`feeds/pon_drivers/airoha-xpon/src/airoha-xpon-crypto.c`
+> 的 `crypto_alloc_sync_skcipher("ecb(aes)")`）—— 每帧一个 block，可忽略。
+> **数据面 XGEM 的 AES 由 PON MAC 硬件完成**（密钥经 `AIROHA_XGPON_AES_UC_IDX*_KEY*` 寄存器下发），
+> 不占 CPU。所以"内核 AES 是软件"在这台 ONU 上对转发性能几乎没影响；想拉开差距的是
+> IPsec / dm-crypt / 走内核的 GCM，而这台机器目前都没装。
+
+**刷机后自检**：
+
+```sh
+# 1) 内核 CE 算法注册上了（最关键）
+grep -A3 '^name         : ecb(aes)$' /proc/crypto   # 期望 driver: ecb(aes-ce)
+grep -A3 '^name         : cbc(aes)$' /proc/crypto   # 期望 driver: cbc(aes-ce)
+grep -A3 '^name         : ctr(aes)$' /proc/crypto   # 期望 driver: ctr(aes-ce)
+grep -A3 '^name         : gcm(aes)$' /proc/crypto   # 期望 gcm_base(ctr-aes-ce,ghash-ce)
+# 2) EIP-93 与 AF_ALG 起来了
+grep -c eip93 /proc/crypto                          # 期望 > 0
+lsmod | grep -E "eip93|cryptodev"
+dmesg | grep -iE "eip93|safexcel"
+# 3) 用户态（本来就硬件，刷完应保持不变）
+/tmp/aes-check                                      # armcap=0x3d，aes-128-gcm ~570 MB/s
+```
+
+万一 EIP-93 在启动时 probe 失败：本机 `panic_on_oops=1`，但 probe 失败是**返回错误**、不会 panic，
+现象只是 `dmesg` 里一条报错 + `/proc/crypto` 里没有 eip93。要临时禁用就删
+`/etc/modules.d/09-crypto-hw-eip93`（或把 `CONFIG_CRYPTO_DEV_EIP93=m` 去掉并同时去掉 `CRYPTO_HW=y`）。
+
+完整核查记录、探针源码与交叉编译命令见 `docs/an7583-armv8-crypto-check.md`
+（含"仍未做的是出数据级别的测试"这一条，见 §8.1）。
 
 ---
 
@@ -771,9 +939,11 @@ dmesg | grep -i "NPU fw version"
 | 改动 | 机型 | 怎么验 |
 |---|---|---|
 | 2.5G 口 LED | ZN504XG-D / ZN515XG-D / Nokia MD & TF / UNG00A | `cat /sys/class/leds/mt7530-0:0f:green:lan-1/trigger` → `[netdev]`；插 2.5G 网线看灯 |
+| 2.5G 口 LED（an7583） | XG-040G-MF | 这台的名字长得多，要带前缀：`cat '/sys/class/leds/1fb00000.system-controller:mdio-bus@c8-mii:0f:green:lan-1/trigger'` → `[netdev]`；插 2.5G 网线看 LED2.5（前缀由来见 §2.1） |
 | 面板口序 | UNG00A | 四根线分别插 LAN1..4，`ip -br link` 看 carrier 是否落在 lan1..4（**不是**按 port 顺序） |
 | 四个 LAN 灯 | HG5585F-CU | ① `ls /sys/class/leds/` 应出现 4 个 `blue:lan-*`（**不是** `mt7530-0:*:green:lan-*`，那是已撤掉的 PHY LED0 方案）；② `dmesg \| grep -iE 'pinctrl\|gbe-led'` 不应有 `-EINVAL` / "not supported" 报错；③ **逐口插线看灯**；④ `dmesg \| grep -i 'leds-gpio'` 不应报无法申请 GPIO43-46 |
 | lan1 冷启动一致性 | HG5585F-CT | `reboot`（热重启）后立刻 `cat /sys/class/net/lan1/carrier`，应看到 `1`；`dmesg \| grep -i "GPY211\|Clause 45"` 不应出现 Generic Clause 45 PHY |
+| 内核硬件加密（AN7583） | XG-040G-MF | ① `grep -A3 '^name         : ecb(aes)$' /proc/crypto` → 期望 `driver: ecb(aes-ce)`（同类还有 `cbc(aes-ce)` / `ctr(aes-ce)`）；② `grep -A3 '^name         : gcm(aes)$' /proc/crypto` → 期望 `gcm_base(ctr-aes-ce,ghash-ce)`；③ `grep -c eip93 /proc/crypto` > 0、`lsmod \| grep -E "eip93\|cryptodev"` 有两条；④ 用户态本来就硬件，刷完 `/tmp/aes-check` 应仍是 `armcap=0x3d`、`aes-128-gcm ~570 MB/s`。完整清单见 §2.8 末尾 |
 | 无线默认值（CN / 160MHz / SSID / WPA2-PSK） | HG5585F-CT / HG5585F-CU / ZN515XG-D | `jsonfilter -i /etc/board.json -e '@.wlan.defaults'` 应见 `country:"CN"`、`widths.5g:"160"`、`ssids.2g/5g`；`uci show wireless \| grep -E "country\|htmode"` 应见 `country='CN'` 与 `htmode='HE160'`；`uci show wireless \| grep -E "ssid\|encryption\|key"` 应见 2.4G=`ImmortalWrt` / 5G=`ImmortalWrt_5G`、两侧 `encryption='psk2'` 且 `key='12345678'`；`iw dev phy1-ap0 info \| grep width` 应见 `width: 160 MHz`；手机能搜到**两个** SSID，用 `12345678` 能连上（随后自己去 LuCI 改密码） |
 | IPTV 组播 | 任意 | §4 的两条命令 |
 | 「上网」灯（第 4 个，真实上网探测） | 所有 airoha 机型 | ① `pon-internet-led status`（配置 + 上次结果）；② `pon-internet-led once` 应为 `online (via …)`；③ `cat /sys/class/leds/*:wan-online/trigger` 期望 `[none]`（用户态接管）；④ 拔网线/`ifdown wan` → 灯立刻灭，`ifup wan` → 3 秒后补探并重新点亮；⑤ `logread \| grep pon-internet-led` 有 online/offline 切换日志 |
@@ -820,6 +990,8 @@ cp docs/luci-app-airoha-npu-port/01_leds.before \
 | 5 | §2.7.3 的「上网」灯（主动探测） | 逻辑写好并编译进镜像，**等实机确认**：能上网 → 常亮，断网/拔纤 → 30 秒内灭；`pon-internet-led once` 可手动验证一次探测。若你常用的站点被列在探测表之外，改 `/etc/config/pon-led` 的 `urls` 即可 |
 | 6 | §2.7.2 的「光信号」灯 | **已按实机反馈退回传统语义**（正常灭、无光红闪），与原厂一致；不需要再验。硬件上这盏灯只有红光，"正常亮绿灯"不存在 |
 | 7 | §2.7 的 feed 驱动补丁（两个） | 改动在 `feed-patches/pon_drivers/airoha-xpon/`，套用/回退见 §5.2.1；`build.sh` 会自动套。`./feed-patches/apply.sh --check` 可随时看状态 |
+| 8 | §2.1 的 an7583（XG-040G-MF）2.5G 灯触发 | 类设备名（`1fb00000.system-controller:mdio-bus@c8-mii:0f:green:lan-1`）是**从运行中的机器读出来的**，不是推导的；但补上触发后**还没重新上机看灯亮**。按 §6.2 对应行确认即可 |
+| 9 | §2.8 的 AN7583 硬件加密 | 配置已编译进固件（产物里能数出 `aes-ce`/`ghash-ce`/`authenc`/`algif_skcipher` 特征串，EIP-93 是模块、按预期不在内核镜像里）；**EIP-93 的硬件存在性已用只读寄存器探针实测确认**，但**"出数据"级别的测试还没做**（真正跑一次加解密）。刷完后按 §2.8 末尾的三条自检，重点是 `/proc/crypto` 里出现 `ecb(aes-ce)` 与 `gcm_base(ctr-aes-ce,ghash-ce)` |
 
 **明确不支持**：**MT7916 不能用 NPU 加速 WiFi 流量**。NPU 的 WiFi 卸载代码只在
 **mt7996** 驱动里，mt7915 目录 0 处 airoha/npu 引用；NPU 固件包也只有 MT7992 / MT7996 两种。
@@ -878,13 +1050,23 @@ target/linux/airoha/patches-6.18/
     950-npu-expose-fw-version-sysfs.patch     NPU 版本/核数 sysfs
 package/base-files/files/                     IPTV 组播 MAC 学习修复（4 个触发点）
 package/base-files/files/lib/functions/
-    uci-defaults.sh                           + ucidef_set_wireless_width()
+    uci-defaults.sh                           + ucidef_set_wireless_width()（板级默认带宽）
+                                              + ucidef_set_wireless()（默认 SSID/加密/密钥）
 package/network/config/wifi-scripts/files/lib/wifi/
     mac80211.uc                               默认带宽支持板级 widths 声明
 target/linux/airoha/an7581/base-files/etc/board.d/
     03_wireless                               带无线机型统一默认值：国家码 CN、5G 160MHz、
                                               双 SSID（ImmortalWrt / ImmortalWrt_5G）、
                                               默认 WPA2-PSK（密钥 12345678）
+target/linux/airoha/an7583/config-6.18         AN7583 硬件加密：ARMv8 CE（AES/GHASH）+ CBC/
+                                              AUTHENC/AF_ALG + CRYPTO_HW + EIP-93（§2.8）
+configs/an7583.config                          同上对应的用户态包：kmod-crypto-hw-eip93 /
+                                              kmod-cryptodev / libopenssl-devcrypto
+docs/an7583-armv8-crypto-check.md              AN7583 硬件加密核查（硬件事实、开了什么/没开什么、
+                                              踩过的 CRYPTO_HW 坑、刷机后自检）
+docs/an7583-aes-check.c                        用户态探针：打印 OPENSSL_armcap_P 与真实吞吐
+docs/an7583-eip93-probe-test.c                 EIP-93 只读寄存器探针模块（证明硬件存在）
+docs/xg-040g-mf-an7583-2p5g-fix.md             XG-040G-MF 2.5G 口三个症状的完整排查记录
 feed-patches/apply.sh                         上游 feed 补丁（幂等）套用脚本，build.sh 自动调
 feed-patches/pon_drivers/airoha-xpon/
     0001-*.patch                               EPON 上 pon0-online 触发器不再死灯
