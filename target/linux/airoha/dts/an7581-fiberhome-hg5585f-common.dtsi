@@ -100,12 +100,12 @@
 			linux,default-trigger = "pon0-registration";
 		};
 
+		/* The LOS LED follows optical signal loss. */
 		led-3 {
 			color = <LED_COLOR_ID_RED>;
 			function = LED_FUNCTION_WAN;
 			gpios = <&en7581_pinctrl 16 GPIO_ACTIVE_LOW>;
-			/* Light received -> steady on, loss -> blink (see pon0-signal). */
-			linux,default-trigger = "pon0-signal";
+			linux,default-trigger = "pon0-los";
 		};
 
 		/* Internet / broadband, follows the xPON online state. */

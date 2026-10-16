@@ -4,11 +4,11 @@
 # pon-led-diag.sh —— 面板灯取证：把"哪个 sysfs 灯 = 面板哪个位置、什么颜色"和
 # "上网灯为什么没亮"一次性查清，不用靠猜。
 #
-# 背景：驱动里的四个 PON 触发器（airoha-xpon-leds.c）语义是
+# 背景：驱动里的三个 PON 触发器（airoha-xpon-leds.c）语义是
 #   pon0-registration : EPON 看 mpcp_state==REGISTERED / XG(S)PON 看 O5 → 常亮
-#   pon0-los          : "线路在跑但没光" → 500ms 慢闪；有光 → 灭（传统语义）
-#   pon0-signal       : 有光 → 常亮；线路在跑但没光 → 500ms 慢闪（本 fork 给"光信号"灯用）
+#   pon0-los          : "线路在跑但没光" → 500ms 慢闪；有光 → 灭（第 3 个"光信号"灯用它）
 #   pon0-online       : "线路在跑 + 有光 + service_ready" → 常亮
+# （曾短暂存在过一个 pon0-signal：有光常亮；实机觉得红灯常亮别扭，已回退，详见 README §2.7.2）
 # service_ready 在 EPON 上只由用户态 OAM 代理（airoha-pond）在**CTC 认证通过**之后才写；
 # 只跑 MPCP + PPPoE 的线路上它永远是 0。所以本 fork 的「上网」灯改成由
 # /usr/libexec/pon-internet-led 主动探测互联网（通=常亮），这一段用 status 模式看。

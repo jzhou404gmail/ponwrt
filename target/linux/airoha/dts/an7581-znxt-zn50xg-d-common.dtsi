@@ -73,8 +73,7 @@
 			function = LED_FUNCTION_WAN;
 			/* The active-low LOS LED is connected to GPIO19. */
 			gpios = <&en7581_pinctrl 19 GPIO_ACTIVE_LOW>;
-			/* Light received -> steady on, loss -> blink (see pon0-signal). */
-			linux,default-trigger = "pon0-signal";
+			linux,default-trigger = "pon0-los";
 		};
 
 		led-internet {

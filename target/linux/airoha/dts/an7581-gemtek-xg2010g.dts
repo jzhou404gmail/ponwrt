@@ -95,8 +95,7 @@
 			color = <LED_COLOR_ID_RED>;
 			function = LED_FUNCTION_WAN;
 			gpios = <&en7581_pinctrl 16 GPIO_ACTIVE_LOW>;
-			/* Light received -> steady on, loss -> blink (see pon0-signal). */
-			linux,default-trigger = "pon0-signal";
+			linux,default-trigger = "pon0-los";
 		};
 
 		/* GPIO42 and GPIO46 drive the LAN4 1GbE bicolor indicator. */

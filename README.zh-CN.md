@@ -42,7 +42,7 @@
 | 12 | `airoha/an7581` | **无线默认值（带无线的三款机型统一）**：国家码 CN、5G 160MHz、2.4G/5G 各自 SSID（`ImmortalWrt` / `ImmortalWrt_5G`）、默认 WPA2-PSK 密钥 `12345678` | 默认值修复 |
 | 13 | `feed-patches` | **上游 feed 补丁机制**：`feeds/` 不入库，改在上游驱动里的修复以补丁形式存 `feed-patches/`，`build.sh` 编译前幂等套用（§5.2.1） | 工具 |
 | 14 | `pon_drivers`（feed 补丁） | **EPON 上 `pon0-online` 永远不亮**（EPON 侧 `service_ready` 无人置 1）→ 改用"LLID 注册完成"作为 service ready | 硬件修复 |
-| 15 | `pon_drivers`（feed 补丁） | **新增 `pon0-signal` 触发器**：有光常亮、断纤闪烁，并把 8 个机型的光信号灯改绑到它（§2.7.2） | 功能修复 |
+| 15 | `airoha`（DTS） | 「光信号」灯的语义：**保持传统语义**（正常灭、无光红闪）。曾试过"有光常亮"，实机觉得别扭后已退回（§2.7.2） | 决策记录 |
 | 16 | `airoha/base-files` | **「上网」灯 = 真实上网状态**：`pon-internet-led` 周期探测 well-known 站点，通就常亮、连续失败即灭；`/etc/init.d` + iface hotplug 拉起（§2.7.3） | 功能修复 |
 | 17 | `docs` | `pon-led-diag.sh`：面板灯取证脚本（触发器/亮度/线路状态/service_ready/OAM 认证 + 逐个点亮对面板） | 文档 |
 | 18 | `verify-images.sh` | **产物体检闸**（+ `build.sh` 自动调用与内核自愈）：抓"体积翻倍 / 普通内核被 initramfs 内核顶替 / 截断"这类**能编译但不能刷**的产物（§5.5，真实事故复盘） | 工具 |
@@ -310,28 +310,26 @@ iw dev phy1-ap0 info | grep -E "channel|width"        # width: 160 MHz
 不存在"信号正常亮绿灯"的灯珠 —— 所以"正常时绿色常亮"在这块硬件上做不到。
 （先用 `docs/pon-led-diag.sh walk` 逐个点亮对一遍面板，颜色与位置一目了然。）
 
-#### 2.7.2 「光信号」灯：有光常亮、断纤闪烁 `[待上机]`
+#### 2.7.2 「光信号」灯：保持传统语义（正常灭、无光红闪）`[实测]`
 
-**需求**：光纤插好、光路正常 → 红灯**常亮**；断纤/无光 → 红灯**闪烁**。
+**结论**：第 3 个「光信号」灯继续用**出厂语义** —— 有光时**灭**，断纤/无光时**500 ms 红闪**，
+即设备树里的 `linux,default-trigger = "pon0-los"`，与原厂固件一致。
 
-**实现**：驱动新增一个触发器 **`pon0-signal`**（`feed-patches/pon_drivers/airoha-xpon/0002-*.patch`）：
+**曾经试过、已退回**：一度在驱动里加过一个触发器 `pon0-signal`（有光 → 常亮；无光 → 闪烁），
+并把 8 个机型的设备树改绑过去，理由是"正常时这盏灯全黑，看起来像坏的"。
+**实机用了几天后当事人觉得"红灯常亮"更别扭**（红灯在光猫语境里天然读作告警），
+于是整条改动回退：
 
-| 线路状态 | `pon0-signal`（本 fork 采用） | `pon0-los`（传统语义，仍保留） |
-|---|---|---|
-| 有光 | **常亮** | 灭 |
-| 无光、线路在跑 | **500ms 闪烁** | 500ms 闪烁 |
-| 线路没跑（PON 口没起来） | 灭 | 灭 |
+* 驱动里的 `pon0-signal` 触发器已删除（`feed-patches/` 里只剩 EPON 那一笔补丁）；
+* 8 个机型的设备树全部改回 `pon0-los`（`grep -rn pon0-los target/linux/airoha/dts/` → 9 处，
+  含 an7583）；
+* 想要"有光常亮"的话，`git revert` 回退本次回退提交即可（`pon0-signal` 的驱动实现与
+  DTS 绑定都在那笔提交里）。
 
-并把 8 个机型的设备树从 `pon0-los` 改绑到 `pon0-signal`（HG5585F / HG5382A / ZN504XG-D /
-ZN515XG-D / UNG00A / XG-040G-MF / XG-040G-MD / HM-2004-DU / XG2010G），这样各机型行为一致。
-
-> ⚠️ **这是本 fork 故意偏离行业惯例的一处**：常规光猫"光信号"灯是**灭 = 正常**、红闪 = 断纤。
-> 这里改成"常亮 = 有光"，好处是面板上"光路好的"这件事有正指示（否则正常时这盏灯全黑，
-> 看起来像坏了一样）。
-> **想回传统语义**：把设备树里那行改回 `linux,default-trigger = "pon0-los";` 即可
-> （8 处，`grep -rn pon0-signal target/linux/airoha/dts/`）。
-> 注意判据是"**有没有光**"而不是"注册没注册"：光有问题（灯闪）和注册有问题（第 2 个灯
-> 在闪）是两件事，分开看才好定位。
+> 需求侧的硬事实仍然成立：这盏灯硬件上**只有红光**（GPIO16，原厂 LED 表里 `LOS` 也只有
+> 这一个脚），所以"正常时亮绿色"做不到；"光路正常"的正指示在第 2 个 PON 灯上（绿色常亮）。
+> 判据始终是"**有没有光**"而不是"注册没注册"：光的问题看这盏灯（红闪），注册的问题看
+> 第 2 个灯（闪），两件事分开才好定位。
 
 #### 2.7.3 「上网」灯：真实探测"能不能上网" `[待上机]`
 
@@ -399,7 +397,7 @@ EOF
 sh docs/pon-led-diag.sh                # 取证：LED/触发器/亮度、线路状态、service_ready、OAM 认证、代理
 sh docs/pon-led-diag.sh walk 4         # 逐个点亮，确认"哪个 sysfs 灯 = 面板哪个位置、什么颜色"
 
-cat /sys/class/leds/red:wan/trigger           # 期望 [pon0-signal]
+cat /sys/class/leds/red:wan/trigger           # 期望 [pon0-los]（传统语义）
 cat /sys/class/leds/blue:wan/trigger          # 期望 [pon0-registration]
 cat /sys/class/leds/blue:wan-online/trigger   # 期望 [none]（被用户态接管）
 
@@ -408,8 +406,8 @@ pon-internet-led once                  # 立刻探一次：online/offline 一目
 logread | grep pon-internet-led        # 每次 online/offline 切换都有日志
 
 # 行为验证
-拔光纤   → 第 3 个灯红闪；第 2 个灯灭；第 4 个灯 30 秒内灭
-插光纤   → 第 3 个灯常亮；注册后第 2 个灯绿灯常亮；能上网后第 4 个灯绿灯常亮
+拔光纤   → 第 3 个灯红闪（500 ms）；第 2 个灯灭；第 4 个灯 30 秒内灭
+插光纤   → 第 3 个灯**灭**（有光就没告警）；注册后第 2 个灯绿灯常亮；能上网后第 4 个灯绿灯常亮
 ifdown wan → 第 4 个灯立刻灭；ifup wan → 3 秒后补探，通则重新点亮
 ```
 
@@ -426,7 +424,7 @@ ifdown wan → 第 4 个灯立刻灭；ifup wan → 3 秒后补探，通则重�
 # 驱动侧判据（feeds/pon_drivers/airoha-xpon/src/airoha-xpon-leds.c）
 #   pon0-registration : EPON 看 mpcp_state==REGISTERED / XG(S)PON 看 O5
 #   pon0-los          : 线路在跑但没光 → 500ms 慢闪；有光 → 灭（传统语义）
-#   pon0-signal       : 有光 → 常亮；线路在跑但没光 → 500ms 慢闪（本 fork 采用）
+#   （曾有一个 pon0-signal：有光 → 常亮；实机觉得别扭，已回退，见 §2.7.2）
 #   pon0-online       : 线路在跑 + 有光 + service_ready（EPON 上按注册判据）
 ```
 
@@ -562,8 +560,7 @@ cd ponwrt
 feed-patches/
 ├── apply.sh                                  # 幂等套用脚本
 └── pon_drivers/airoha-xpon/
-    ├── 0001-*.patch                          # EPON 上 pon0-online 不再死灯（§2.7.3）
-    └── 0002-*.patch                          # 新增 pon0-signal 触发器（§2.7.2）
+    └── 0001-*.patch                          # EPON 上 pon0-online 不再死灯（§2.7.3）
 ```
 
 * `build.sh` 在 **make 之前**自动调用 `feed-patches/apply.sh`：已套过的跳过，没套的套上，
@@ -780,7 +777,7 @@ dmesg | grep -i "NPU fw version"
 | 无线默认值（CN / 160MHz / SSID / WPA2-PSK） | HG5585F-CT / HG5585F-CU / ZN515XG-D | `jsonfilter -i /etc/board.json -e '@.wlan.defaults'` 应见 `country:"CN"`、`widths.5g:"160"`、`ssids.2g/5g`；`uci show wireless \| grep -E "country\|htmode"` 应见 `country='CN'` 与 `htmode='HE160'`；`uci show wireless \| grep -E "ssid\|encryption\|key"` 应见 2.4G=`ImmortalWrt` / 5G=`ImmortalWrt_5G`、两侧 `encryption='psk2'` 且 `key='12345678'`；`iw dev phy1-ap0 info \| grep width` 应见 `width: 160 MHz`；手机能搜到**两个** SSID，用 `12345678` 能连上（随后自己去 LuCI 改密码） |
 | IPTV 组播 | 任意 | §4 的两条命令 |
 | 「上网」灯（第 4 个，真实上网探测） | 所有 airoha 机型 | ① `pon-internet-led status`（配置 + 上次结果）；② `pon-internet-led once` 应为 `online (via …)`；③ `cat /sys/class/leds/*:wan-online/trigger` 期望 `[none]`（用户态接管）；④ 拔网线/`ifdown wan` → 灯立刻灭，`ifup wan` → 3 秒后补探并重新点亮；⑤ `logread \| grep pon-internet-led` 有 online/offline 切换日志 |
-| 「光信号」灯（第 3 个） | 所有 airoha 机型 | ① `cat /sys/class/leds/*:wan/trigger` → `[pon0-signal]`（红的那盏）；② 插着光纤 → **红灯常亮**；拔光纤 → **红灯 500ms 闪**；③ `sh docs/pon-led-diag.sh walk 4` 确认该位置就是 GPIO16 那盏红灯。想回到"灭=正常"的老语义：把设备树那行改回 `pon0-los` |
+| 「光信号」灯（第 3 个） | 所有 airoha 机型 | ① `cat /sys/class/leds/*:wan/trigger` → `[pon0-los]`（红的那盏）；② 插着光纤 → **灭**（有光不告警）；拔光纤 → **红灯 500ms 闪**；③ `sh docs/pon-led-diag.sh walk 4` 确认该位置就是 GPIO16 那盏红灯。曾试过"有光常亮"，实机觉得别扭已退回（§2.7.2） |
 | 「PON」灯（第 2 个，注册） | 所有 airoha 机型 | 注册成功应绿灯常亮：`cat /sys/class/leds/*:wan/trigger` → `[pon0-registration]` |
 
 > LuCI 的 JS 带 `?v=` 版本号，而那个版本号来自 luci-base 不是本包，**刷完请硬刷新浏览器
@@ -821,7 +818,7 @@ cp docs/luci-app-airoha-npu-port/01_leds.before \
 | 3 | §2.4 的 HG5585F-CT GPY211C | 结论基于复位时序竞态分析，需在真机上做一次热重启核对 |
 | 4 | 机型覆盖 | 修复的根因取证与刷机回归以 **ZN504XG-D** 为主力机型（UNG00A 的口序结论有换线实测记录）。其余 11 个机型已一起编译出固件，但未逐个上机验证，按 §6.2 自检即可 |
 | 5 | §2.7.3 的「上网」灯（主动探测） | 逻辑写好并编译进镜像，**等实机确认**：能上网 → 常亮，断网/拔纤 → 30 秒内灭；`pon-internet-led once` 可手动验证一次探测。若你常用的站点被列在探测表之外，改 `/etc/config/pon-led` 的 `urls` 即可 |
-| 6 | §2.7.2 的「光信号」灯（有光常亮） | 驱动新增 `pon0-signal` 触发器 + 8 个机型改绑，**等实机确认**：插纤常亮、拔纤闪。这是**故意偏离行业惯例**的一处（常规是"灭=正常"），想回去见 §2.7.2 的改法。另外这盏灯硬件上只有红光，不存在"正常亮绿灯" |
+| 6 | §2.7.2 的「光信号」灯 | **已按实机反馈退回传统语义**（正常灭、无光红闪），与原厂一致；不需要再验。硬件上这盏灯只有红光，"正常亮绿灯"不存在 |
 | 7 | §2.7 的 feed 驱动补丁（两个） | 改动在 `feed-patches/pon_drivers/airoha-xpon/`，套用/回退见 §5.2.1；`build.sh` 会自动套。`./feed-patches/apply.sh --check` 可随时看状态 |
 
 **明确不支持**：**MT7916 不能用 NPU 加速 WiFi 流量**。NPU 的 WiFi 卸载代码只在
@@ -891,7 +888,6 @@ target/linux/airoha/an7581/base-files/etc/board.d/
 feed-patches/apply.sh                         上游 feed 补丁（幂等）套用脚本，build.sh 自动调
 feed-patches/pon_drivers/airoha-xpon/
     0001-*.patch                               EPON 上 pon0-online 触发器不再死灯
-    0002-*.patch                               新增 pon0-signal 触发器（有光常亮/断纤闪）
 target/linux/airoha/base-files/usr/libexec/
     pon-internet-led                           「上网」灯 = 主动探测互联网（通=常亮、连续失败=灭）
 target/linux/airoha/base-files/etc/init.d/
