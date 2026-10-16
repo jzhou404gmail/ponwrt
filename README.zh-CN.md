@@ -973,6 +973,64 @@ rm -rf build_dir/target-*/linux-airoha_an7581     # 或对应的 board 目录
 5. 那次坏产物留了一份当回归样本：`tmp/broken/*.itb`（117 MiB，gitignore 里的 tmp/，
    随时可删）。改完体检脚本拿它跑一遍，应当**失败且退出码为 2**。
 
+### 5.6 GitHub Actions 发布（CI 编固件并出 release）
+
+仓库里带了一份 `.github/workflows/release.yml`，**在 GitHub 上就能编出固件并发布**，
+不需要自己的机器 —— 用法和 [pbs05/uboot-an758x](https://github.com/pbs05/uboot-an758x) 那套是一样的。
+
+**怎么用**：仓库 **Actions → Release PonWrt → Run workflow**，填两个输入：
+
+| 输入 | 说明 |
+|---|---|
+| `tag` | 要发布的标签，例如 `v1.0.0`（必填） |
+| `prerelease` | 是否标为预发布（默认 `true`） |
+
+跑完 Release 页会出现 `PonWrt <tag>`，附件是：
+
+```
+ponwrt-an7581.tar.zst      # bin/targets/airoha/an7581/ 整个目录打包
+ponwrt-an7583.tar.zst      # 同理
+sha256sums
+```
+
+**用的是项目默认配置，不是本机 `.config`** —— 这正是关键的一步：
+
+```sh
+./scripts/kconfig.pl + configs/${target}.config configs/release.config > .config
+make defconfig
+```
+
+* `configs/an7581.config` / `configs/an7583.config` 是**入库的种子配置**
+  （`TARGET_MULTI_PROFILE=y` + `TARGET_PER_DEVICE_ROOTFS=y`，一次编出该子目标下全部机型）；
+* `configs/release.config` 是**发布叠加**（nft offload / wireguard / tcp-bbr / cake /
+  `luci-app-airoha-npu` 等 11 项）；
+* 用 `kconfig.pl +` 做**递归合并**，比 `cat` 更稳 —— 同一个符号在两份里都给值时不会留下重复行；
+* 本机的 `.config` **根本不在仓库里**（`.gitignore` 里的 `/.config`），所以 CI 不可能用到
+  你个人的配置。
+
+**本 fork 对这份 workflow 补了三处**（前两条缺了，发出去的固件就是错的）：
+
+| 步骤 | 为什么必须有 |
+|---|---|
+| `feed-patches/apply.sh` | `feeds/` 不入库，**EPON 上 `pon0-online` 恒灭**的修复只以补丁形式存在 `feed-patches/`。上游原来的 workflow 没有这一步 —— 那样编出来的固件会**静默缺少**这个修复（`feeds install` 拿到的是未打补丁的源码）。补丁套不上时脚本以非 0 退出，整个 job 失败，不会发布错固件 |
+| `verify-images.sh` | "编译成功"不等于"能刷"（§5.5 那次事故）。不过这道闸就不产出 release |
+| `fetch-depth: 0` | `scripts/getver.sh` 是靠 `git rev-list <固定提交>..HEAD` 数提交来算 `DISTRIB_REVISION` 的，`depth=1` 的浅克隆里那个提交不存在，算出来是错的 —— 刷完机 `cat /etc/openwrt_release` 就对不上 |
+
+**可选**：`PONWRT_APK_PRIVATE_KEY` secret 用来签发 apk 包（不设也能编，只是包不签名）。
+
+> ⚠️ **三个已知限制**：
+> ① CI 里跑的是**裸 `make`，不是 `build.sh`** —— 所以本地的并发锁、逐包日志、失败自愈
+> 在 CI 里都没有。CI 是一次性干净环境，这些本来也不必要，但"自愈"同样帮不上忙，
+> 失败就是整轮重跑；
+> ② 上游这份是**手动触发**（`workflow_dispatch` + tag 输入），不是 uboot-an758x 那种
+> "推 tag 就发"。想改成推 tag 自动发，在 `on:` 下加 `push: tags: ['v*']`，
+> 并把 release job 里用 `inputs.tag` 的地方换成 `github.ref_name` 即可；
+> ③ `ccache` 在依赖列表里装了，但 `configs/*.config` 里 `CONFIG_CCACHE` 是**关的**
+> （`# CONFIG_CCACHE is not set`，`CONFIG_CCACHE_DIR=""`）⇒ 缓存实际没生效，每次
+> 发布都是全量编译。想加速重复发布，可以在 `make defconfig` 前给 `.config` 加一行
+> `CONFIG_CCACHE=y`，再缓存 `<topdir>/.ccache`（`rules.mk` 里目录为空时回落到它）。
+> **本仓库没有 CI 实测耗时记录**，二次发布前建议先跑一次看是否落在 360 分钟的 job 上限内。
+
 ---
 
 ## 6. 刷机与刷后自检
