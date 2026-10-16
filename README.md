@@ -21,7 +21,7 @@
 | **PON 面板灯（含 EPON 上「上网」灯永远不亮）** | ① 「光信号」灯保持传统语义（正常灭、无光红闪），曾试过"有光常亮"，实机觉得别扭已退回；② **EPON 没有 OMCI**，`service_ready` 只由用户态 OAM 代理在 CTC 认证之后才写，而普通 MPCP 注册 + PPPoE 的线路永远到不了那个状态 ⇒ `pon0-online` 恒灭，补丁改为以"LLID 注册完成"作判据；③ 「上网」灯另外改成**真实探测能不能上网**，不再跟着 PON 注册状态 |
 | **`luci-app-airoha-npu`** | NPU 面板移植，**WAN = PON 口**（上游是 2.5G 铜口）；WiFi 数据源按 MT7916D 重写（上游那套只认 mt7996，一个频段都匹配不上）；Frame Engine 区新增 CDM1 / CDM2 两张 CPU DMA 卡片；铜口卡改成运行时解析 GDM 而不是写死 gdm4；另加一个内核补丁把 **NPU 固件版本暴露到 sysfs**，用户态不必去 grep 启动日志 |
 | **IPTV 机顶盒报「2001 网络不可达」** | 组播 VLAN 口上保持 MAC 学习关闭 |
-| **构建工具** | `build.sh`（对增量编译友好、逐包日志、运行摘要、被静默 kill 后能自恢复）/ `build-watch.sh` / `build-live.sh`；上游 feed 补丁机制（`feed-patches/`，幂等套用）；`verify-images.sh` 挡掉**能编译但不能刷**的产物 |
+| **构建工具** | `build.sh`：**不改动构建输入**（增量友好）、`--config=` 带备份与掉包保护、并发锁、逐包日志、**两处自愈**（包子构建被静默打断 / 内核树被留在 initramfs 配置上）、收尾汇总耗时并列出本次新产物；另有 `build-watch.sh`（读日志看进度）与 `build-live.sh`（不依赖日志，直接看进程与文件改动）；上游 feed 补丁机制（`feed-patches/`，幂等套用）；`verify-images.sh` 挡掉**能编译但不能刷**的产物。用法详见 [README.zh-CN.md](README.zh-CN.md) 第 5.3 节 |
 | **其他** | `feeds.conf.default` 以注释形式记录可选的 PassWall feed；`.gitignore` 忽略本机 `.config` 备份、原厂固件转储与本机运维脚本 |
 
 本 fork 只保留**一条主线**：`master` = 上游 + 本 fork 的全部改动，构建就从这一条分支走。
@@ -36,8 +36,9 @@
   以及 AN7583 的 Nokia XG-040G-MF（`nokia_xg-040g-mf`、`nokia_xg-040g-mf-ubi` 两个 profile）。
 - **编译**：`cp configs/an7581.config .config`（AN7583 换成 `configs/an7583.config`）→
   `make defconfig` → `make -j$(nproc)`，产物在 `bin/targets/airoha/{an7581,an7583}/`。
-  本 fork 另提供 `./build.sh`（对增量编译友好，并自动套用 feed 补丁、做完产物体检），
-  见 [README.zh-CN.md](README.zh-CN.md) 第 5 节。
+  本 fork 另提供 **`./build.sh`** —— 默认沿用现有 `.config` 不动它（增量编译）、自动套 feed 补丁、
+  逐包日志、失败自愈、编完自动做产物体检；**参数与用法见
+  [README.zh-CN.md](README.zh-CN.md) 第 5.3 节**。
 - **刷入**：先用 [AN758x-Stock2UBI](https://github.com/pbs05/an758x-stock2ubi) 备份原厂 flash 并写入
   UBI 布局，启动镜像与 Web 恢复由 [AN758x U-Boot](https://github.com/pbs05/uboot-an758x) 提供；
   刷完后经 U-Boot Web 或 LuCI 的 **网络 → PON → 配置 → PON 板卡数据** 回填原厂校准与身份数据

@@ -166,14 +166,46 @@ netdev 拿到 carrier"的方式实测到的真实映射：
 
 **现象**：CU 面板上四个 LAN 灯全灭，但四个口 link 正常。
 
-**根因**：面板灯挂在 **GPIO43-46**（低有效）上 —— 并行 NAND 占了 GPIO4-7 与 GPIO30-42，
-这块板剩下的可用脚就是 GPIO43-46。而早期这块板的设备树里**根本没有这四个 LED 节点**，
-没有任何东西去驱动它们，所以灯一直是灭的。
+**根因**：面板灯挂在 **GPIO43-46**（低有效）上 —— 并行 NAND 占了 **pin 4-7**
+（`spi_cs0/clk/mosi/miso`，没有 GPIO 编号）与 **pin 30-42**，按
+`gpio-ranges = <&en7581_pinctrl 0 13 50>` 的偏移换算即 **GPIO17-29**（这里容易看错：
+pin 号和 GPIO 号差 13，所以不是 "GPIO4-7 与 GPIO30-42"）。这块板剩下的可用脚就是
+GPIO43-46。而早期这块板的设备树里**根本没有这四个 LED 节点**，没有任何东西去驱动它们，
+所以灯一直是灭的。
 
 **修复（上游 `91077e9a6b`，作者在真机 CU 上逐脚驱动 GPIO 验证过）**：在
 `an7581-fiberhome-hg5585f-common.dtsi` 里把 GPIO43-46 描述成 4 个普通 `gpio-leds`
 （`blue:lan-1` .. `blue:lan-4`），并在 `board.d/01_leds` 的 `fiberhome,hg5585f-cu`
 case 里给它们绑 netdev 触发。
+
+**四个灯的最终形态**（`hg5585f-cu` 与 `hg5585f-cu-usb-sfp` 的 compatible 相同，
+所以两个 profile 吃的是同一套）：
+
+| 面板 | sysfs 类设备 | GPIO | UCI 触发 |
+|---|---|---|---|
+| LAN1 | `blue:lan-1` | GPIO43 | `netdev` → `lan1`，`link tx rx` |
+| LAN2 | `blue:lan-2` | GPIO44 | `netdev` → `lan2`，`link tx rx` |
+| LAN3 | `blue:lan-3` | GPIO45 | `netdev` → `lan3`，`link tx rx` |
+| LAN4 | `blue:lan-4` | GPIO46 | `netdev` → `lan4`，`link tx rx` |
+
+> ✅ **已上机确认（2026-10-16）：CU 这四个 LAN 灯全部正常。** 上游那套
+> 「gpio-leds + netdev 触发」就是对的，本 fork 原先的 PHY LED0 路线不需要再恢复。
+
+**上机自检**：
+
+```sh
+ls /sys/class/leds/ | grep 'blue:lan'       # 期望 4 个：blue:lan-1 .. blue:lan-4
+cat /sys/class/leds/blue:lan-1/trigger      # 期望 [netdev]
+cat /sys/class/leds/blue:lan-1/device_name  # 期望 lan1
+# 逐口插线：对应口的灯亮，并随 link/tx/rx 变化
+```
+
+> ⚠️ **CT 别和 CU 搞混**：CT 与 CU 共用 `an7581-fiberhome-hg5585f-common.dtsi`，
+> 所以 **CT 的设备树里同样有这 4 个 `led-lanN` 节点**，但 `01_leds` 只给
+> `fiberhome,hg5585f-cu` 绑了触发（上游的理由是 CT 面板上没有 GE 口灯）。
+> 结果是 **CT 上这 4 个节点存在、灯不会亮** —— 这是上游的有意取舍，不是漏配。
+> 若实测发现手上的 CT 面板其实有 4 个 GE 口灯，就在 `01_leds` 的
+> `fiberhome,hg5585f-ct` case 里照 CU 那样补 4 行即可。
 
 > 📌 **本 fork 曾走另一条路，现已撤掉**：用内核补丁
 > `203-09-pinctrl-airoha-permit-GPIO43-46-for-PHY-LED0.patch` 把 GPIO43-46 mux 成
@@ -759,47 +791,75 @@ git fetch origin && git merge origin/master     # 同步上游
   推的是**自己的 fork**，不会误推到上游（`branch.master.remote` 仍是 `origin`，
   所以 `git status` 里"领先上游多少个提交"照样能看）。
 
-### 5.3 三种编译方式
+### 5.3 `build.sh`：功能与用法
 
-```sh
-./build.sh                 # 默认：沿用现有 .config，绝不改动它（增量编译）
-./build.sh --config=an7581 # 从 configs/an7581.config + configs/release.config 重建 .config
-JOBS=2 ./build.sh          # 内存紧张时降并行
-./build.sh --watch         # 另开一个终端只看进度
-```
+#### 5.3.1 参数一览
 
-`build.sh` 的设计原则是**只做加法、绝不改动构建输入**：不传任何额外 make 变量、
-不重写 `.config`，保证 OpenWrt 的增量判断完全按你原来那套走。raw make 输出全部进
-`tmp/build.log`，控制台只打印进度块（阶段 / 里程碑 / 正在编译什么）。
-编译前会先跑一遍 `feed-patches/apply.sh`（§5.2.1），这一步是幂等的，没补丁要套时
-什么都不做。
+| 命令 | 作用 |
+|---|---|
+| `./build.sh` | **默认：完全沿用现有 `.config`，绝不修改它** —— 配置已经调好、只想增量编译时用这个 |
+| `./build.sh --config=an7581` | 用 `configs/an7581.config` + `configs/release.config` 重建 `.config`（带备份与掉包保护，见 §5.3.3 的 ① ②） |
+| `JOBS=2 ./build.sh` | 降低并行度（内存紧张时避免被 OOM 击杀） |
+| `./build.sh --watch` | **只做进度监视，不编译**（等价于直接跑 `./build-watch.sh`） |
+| `./build.sh --force` | 忽略并发锁（**危险**，确认没有别的构建在跑再用） |
+| `./build.sh -h` / `--help` | 打印脚本头部的用法说明 |
 
-`--config=<档>` 会先自动备份现有 `.config`，并且**带掉包保护**：
-如果新配置的包数量比原来少 20% 以上就中止并自动还原。
+#### 5.3.2 设计原则：只做加法，绝不改动构建输入
 
-**并发保护**：同一棵树里并行跑两个 `make` 会同时写 `build_dir/` 与 `staging_dir/`，
-症状是 libunistring/perl 之类完全无关的包"随机"编译失败，极难排查。`build.sh` 用
-`tmp/build.lock` 挡住这种情况，确认真没别的构建在跑时才加 `--force`。
+不传任何额外的 make 变量、不重写 `.config`（除非你显式给 `--config=`），
+保证 OpenWrt 的增量判断完全按你原来那套走 —— **只有改动过的部分才重编**。
 
-**收尾汇总**：编译结束时会打印**开始时间 / 结束时间 / 总共耗时**（成功、失败、
-Ctrl-C 中断三种情况都会打；`SUMMARY_DONE` 去重，中断时不会既报"被中断"又报"失败"），
-同一段也追加进 `tmp/build.log` 末尾，方便事后对时间。
+#### 5.3.3 它按顺序做了这些事
 
-**每个包的日志 + 失败自愈**：`build.sh` 默认开 `BUILD_LOG=1`，每个包的完整输出落在
-`logs/<包>/compile.txt`（整棵树约 2.5 MB，已在 `.gitignore` 里）。这样任何失败都有明细可查 ——
-`tmp/build.log` 里通常只有一行 `ERROR: <包> failed to build.`，**真正的报错只在这份日志里**。
+| # | 阶段 | 做什么 | 为什么 |
+|---|---|---|---|
+| ① | 套配置 | 只有给 `--config=<档>` 时才动 `.config`：先备份成 `.config.bak-ponwrt-<时间戳>`，再 `cat configs/<档>.config configs/release.config > .config` + `make defconfig` | 让"用种子配置重建"这件事可回退 |
+| ② | 掉包保护 | 对比 `CONFIG_PACKAGE_*=y` 的数量，若从 N 掉到 **< N×0.8** 就**中止并把备份还原** | 一次误操作就能把手调的配置覆盖掉；打印 `包选择数量: before -> after` 让你看见变化 |
+| ③ | 套 feed 补丁 | 跑一遍 `feed-patches/apply.sh`（幂等，§5.2.1） | `feeds/` 不入库，改在上游驱动里的修复靠补丁落地；刚套上的会清掉 `build_dir` 旧拷贝，保证增量编译用的是改过的源码 |
+| ④ | 并发锁 | `tmp/build.lock`：锁在 **6 小时内** → 中止并打印锁里的 pid/时间；**过期锁** → 忽略继续 | 同一棵树并发 `make` 会同时写 `build_dir/` 与 `staging_dir/`，症状是 libunistring/perl 这类毫不相干的包"随机"失败，极难排查 |
+| ⑤ | 编译 | `make -j$JOBS`，**原始输出全部进 `tmp/build.log`** | 控制台留给进度块，细节随时可查 |
+| ⑥ | 进度 | 后台起 `build-watch.sh` 读日志，控制台只打印阶段/里程碑/正在编译什么 | 见 §5.3.4 |
+| ⑦ | 逐包日志 | `BUILD_LOG=1` → 每个包的完整输出落 `logs/<包>/compile.txt`（整棵树约 2.5 MB，已在 `.gitignore`） | `tmp/build.log` 里通常只有一行 `ERROR: <包> failed to build.`，**真正的报错只在这份日志里** |
+| ⑧ | 失败自愈 | 见 §5.3.5 | |
+| ⑨ | 产物体检 | 编译成功后自动跑 `verify-images.sh`；若它返回 **2**（内核树脏这一类）则 `rm -rf build_dir/target-*/<board>_<subtarget>` 后**重编一遍**；其它非 0 直接判失败并提示"不要刷" | "能编译"不等于"能刷"，真实事故见 §5.5 |
+| ⑩ | 收尾 | 打印**开始时间 / 结束时间 / 总共耗时**（成功、失败、Ctrl-C 三种都打，`SUMMARY_DONE` 去重），追加进 `tmp/build.log`；再列出**本次新产出的 `.itb`** 与烧录自检提示 | 事后对时间、确认这次到底产出了什么 |
+| ⑪ | 信号处理 | `trap EXIT INT TERM` → 连 **`make` 和 `build-watch.sh` 一起收掉**并删锁 | 否则 Ctrl-C 后 `make` 变孤儿继续跑，而锁已经删了 ⇒ 下次启动就是并发编译 |
 
-> 🐛 **已知的时序性失败（"静默被打断"）**：某个包的子 make 被信号打断，于是
-> `tmp/build.log` 里只有那一行 ERROR、而 `logs/<包>/compile.txt` 是**空文件**（连
-> `time.pl` 的 `time: <包>/compile#...` 都没有）—— 这不是编译报错，重编一次就好。
-> `build.sh` 会按这个判据自动处理：① 单独 `make <包>/compile` 把该包编好；
-> ② 重新跑整个构建（最多 2 轮）；③ 打印说明，绝不静默重试。
-> 判据"`logs/<包>/compile.txt` 为空"**不会误伤真报错** —— 真报错时该文件非空，脚本直接失败退出。
+#### 5.3.4 三种"看进度"的方式
+
+| 工具 | 原理 | 什么时候用 |
+|---|---|---|
+| `build.sh` 自带的进度块 | 读 `tmp/build.log` | 默认，什么都不用做 |
+| `./build-watch.sh [--once] [--iv=10]` | 同样读日志，但可以**单独另开一个终端**跑；`--once` 只打印一次 | 想边编译边盯进度 |
+| `./build-live.sh [--iv=10] [--fast]` | **不依赖日志**，直接看「进程 + 文件系统改动」 | 你是用裸 `make -j$(nproc)` 起的构建，没有日志可读时 |
+
+> `build-watch.sh` 除了绝对状态还给出两个**活性指标**：系统负载（接近核数 = 正在满负荷编译）
+> 与日志静默时长。**进度条"看起来不动"通常是正常的** —— make 只在开始编一个包时打一行，
+> samba4 / nfs-utils 这类大包会静默几十分钟；要看负载，而不是看有没有新行。
+
+#### 5.3.5 两个"自愈"行为（都不是静默重试）
+
+> 🐛 **一、包的子构建被"静默打断"**：某个包的子 make 被信号打断，于是 `tmp/build.log`
+> 里只有那一行 ERROR、而 `logs/<包>/compile.txt` 是**空文件**（连 `time.pl` 的
+> `time: <包>/compile#...` 都没有）—— 这不是编译报错，重编一次就好。
+> `build.sh` 按这个判据自动处理：① 单独 `make <包>/compile` 把该包编好；
+> ② 重新跑整个构建（**最多 2 轮**）；③ 每一步都打印说明，绝不静默重试。
+> 判据"`compile.txt` 为空"**不会误伤真报错** —— 真报错时该文件非空，脚本直接失败退出。
 > 实测（桩 make 单测）：正常 1 次通过；静默失败 → 自动重编 + 第 2 次尝试通过；真报错 → 立即失败并打印日志末尾。
->
-> 排查这类问题时，先看三处：`logs/<包>/compile.txt`（为空 = 被打断）、
-> `dmesg | grep -i oom`（内存击杀，需要 root）、以及**同一棵树里有没有第二个 `make` 在跑**
-> （`build.sh` 的锁挡不住手敲的 `make`）。
+
+> 🧹 **二、内核构建树被留在 initramfs 配置上**（`verify-images.sh` 返回 2）：
+> 上一次被中途打断的构建会把内核树留在 initramfs 配置上，这次 sysupgrade 镜像里就会塞进
+> **initramfs 内核**（体积翻倍、U-Boot inflate 失败 → 无限重启）。这一类**可以自愈**：
+> `build.sh` 清掉 `build_dir/target-*/<board>_<subtarget>` 后重编一遍，只做一次，避免死循环。
+> 复盘见 §5.5。
+
+#### 5.3.6 构建失败时按这个顺序查
+
+1. **`logs/<包>/compile.txt`** —— 真正的报错在这里；**为空 = 被静默打断**（会被自愈，见 §5.3.5）
+2. `tmp/build.log` 末尾 —— 失败时 `build.sh` 会自动打印最后 25 行
+3. `grep -nE 'ERROR:|build failed' tmp/build.log | tail`
+4. `dmesg | grep -i oom` —— 内存击杀（需要 root）
+5. **同一棵树里有没有第二个 `make` 在跑** —— `build.sh` 的锁挡不住手敲的 `make`
 
 ### 5.4 产物
 
@@ -944,7 +1004,7 @@ dmesg | grep -i "NPU fw version"
 | 2.5G 口 LED | ZN504XG-D / ZN515XG-D / Nokia MD & TF / UNG00A | `cat /sys/class/leds/mt7530-0:0f:green:lan-1/trigger` → `[netdev]`；插 2.5G 网线看灯 |
 | 2.5G 口 LED（an7583） | XG-040G-MF | 这台的名字长得多，要带前缀：`cat '/sys/class/leds/1fb00000.system-controller:mdio-bus@c8-mii:0f:green:lan-1/trigger'` → `[netdev]`；插 2.5G 网线看 LED2.5（前缀由来见 §2.1） |
 | 面板口序 | UNG00A | 四根线分别插 LAN1..4，`ip -br link` 看 carrier 是否落在 lan1..4（**不是**按 port 顺序） |
-| 四个 LAN 灯 | HG5585F-CU | ① `ls /sys/class/leds/` 应出现 4 个 `blue:lan-*`（**不是** `mt7530-0:*:green:lan-*`，那是已撤掉的 PHY LED0 方案）；② `dmesg \| grep -iE 'pinctrl\|gbe-led'` 不应有 `-EINVAL` / "not supported" 报错；③ **逐口插线看灯**；④ `dmesg \| grep -i 'leds-gpio'` 不应报无法申请 GPIO43-46 |
+| 四个 LAN 灯 | HG5585F-CU | **已上机确认正常（2026-10-16）**。① `ls /sys/class/leds/` 应出现 4 个 `blue:lan-*`（**不是** `mt7530-0:*:green:lan-*`，那是已撤掉的 PHY LED0 方案）；② `cat /sys/class/leds/blue:lan-1/trigger` → `[netdev]`、`device_name` → `lan1`；③ **逐口插线看灯**；④ `dmesg \| grep -i 'leds-gpio'` 不应报无法申请 GPIO43-46 |
 | lan1 冷启动一致性 | HG5585F-CT | `reboot`（热重启）后立刻 `cat /sys/class/net/lan1/carrier`，应看到 `1`；`dmesg \| grep -i "GPY211\|Clause 45"` 不应出现 Generic Clause 45 PHY |
 | 内核硬件加密（AN7583） | XG-040G-MF | ① `grep -A3 '^name         : ecb(aes)$' /proc/crypto` → 期望 `driver: ecb(aes-ce)`（同类还有 `cbc(aes-ce)` / `ctr(aes-ce)`）；② `grep -A3 '^name         : gcm(aes)$' /proc/crypto` → 期望 `gcm_base(ctr-aes-ce,ghash-ce)`；③ `grep -c eip93 /proc/crypto` > 0、`lsmod \| grep -E "eip93\|cryptodev"` 有两条；④ 用户态本来就硬件，刷完 `/tmp/aes-check` 应仍是 `armcap=0x3d`、`aes-128-gcm ~570 MB/s`。完整清单见 §2.8 末尾 |
 | 无线默认值（CN / 160MHz / SSID / WPA2-PSK） | HG5585F-CT / HG5585F-CU / ZN515XG-D | `jsonfilter -i /etc/board.json -e '@.wlan.defaults'` 应见 `country:"CN"`、`widths.5g:"160"`、`ssids.2g/5g`；`uci show wireless \| grep -E "country\|htmode"` 应见 `country='CN'` 与 `htmode='HE160'`；`uci show wireless \| grep -E "ssid\|encryption\|key"` 应见 2.4G=`ImmortalWrt` / 5G=`ImmortalWrt_5G`、两侧 `encryption='psk2'` 且 `key='12345678'`；`iw dev phy1-ap0 info \| grep width` 应见 `width: 160 MHz`；手机能搜到**两个** SSID，用 `12345678` 能连上（随后自己去 LuCI 改密码） |
@@ -987,7 +1047,7 @@ cp docs/luci-app-airoha-npu-port/01_leds.before \
 | # | 项目 | 状态 |
 |---|---|---|
 | 1 | §2.5 的 XG-040G-MF LED 命名补全 | 标 `[补全]`，未单独上机验证（只影响类设备命名，风险低） |
-| 2 | §2.3 的 HG5585F-CU 四个 LAN 灯 | 已改用上游 `91077e9a6b` 的方案（GPIO43-46 gpio-leds + `01_leds` netdev 触发），该方案由上游作者在真机 CU 上验证。本 fork 原先的 PHY LED0 mux 路线已撤销；仍需按 §6.2 上机确认灯确实亮 |
+| 2 | §2.3 的 HG5585F-CU 四个 LAN 灯 | 已改用上游 `91077e9a6b` 的方案（GPIO43-46 gpio-leds + `01_leds` netdev 触发），本 fork 原先的 PHY LED0 mux 路线已撤销。**2026-10-16 已上机确认：CU 四个 LAN 灯全部正常**，无需再处理（§2.3） |
 | 3 | §2.4 的 HG5585F-CT GPY211C | 结论基于复位时序竞态分析，需在真机上做一次热重启核对 |
 | 4 | 机型覆盖 | 修复的根因取证与刷机回归以 **ZN504XG-D** 为主力机型（UNG00A 的口序结论有换线实测记录）。其余 11 个机型已一起编译出固件，但未逐个上机验证，按 §6.2 自检即可 |
 | 5 | §2.7.3 的「上网」灯（主动探测） | 逻辑写好并编译进镜像，**等实机确认**：能上网 → 常亮，断网/拔纤 → 30 秒内灭；`pon-internet-led once` 可手动验证一次探测。若你常用的站点被列在探测表之外，改 `/etc/config/pon-led` 的 `urls` 即可 |
@@ -1048,7 +1108,10 @@ grep -n 'gpio4[3-6]' target/linux/airoha/dts/an7581-fiberhome-hg5585f-*.dtsi   #
 README.md                                     中文主页（本 fork；英文原文已移到 README.en.md）
 README.en.md                                  英文页（上游 README.md 的英文原文 + 本 fork 概览）
 README.zh-CN.md                               本文件：相对上游的全部改动与取证记录
-build.sh / build-watch.sh / build-live.sh     编译入口与两种进度观察
+build.sh                                      编译入口：不改构建输入、并发锁、逐包日志、失败自愈、
+                                              编完自动产物体检（功能与用法见 §5.3）
+build-watch.sh                                读 tmp/build.log 显示进度（阶段/里程碑/活性指标）
+build-live.sh                                 不依赖日志：直接看进程 + 文件系统改动
 verify-images.sh                              刷机前产物体检（FIT 内部结构/内核 cpio/体积）
 docs/verify-fit.py                            verify-images.sh 的 FIT 解析内核部分
 package/luci-app-airoha-npu/                  NPU/Frame Engine 面板（1.2.0-r3）
