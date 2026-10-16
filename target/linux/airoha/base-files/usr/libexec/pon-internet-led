@@ -1,0 +1,250 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# pon-internet-led —— 面板「上网」灯 = **真的能不能上网**
+#
+# 面板第 4 个灯丝印「上网」，对应 DTS 里 function = WAN_ONLINE 的那个 LED
+# （sysfs 名字形如 <color>:wan-online）。
+#
+# 为什么不再看 PON：出厂绑的触发器 pon0-online 只反映 PON 侧状态 ——
+#   * XG(S)-PON / GPON：service_ready 由 OMCI 数据通道决定，基本等于"能上网"；
+#   * EPON：service_ready 只由用户态 OAM 代理（airoha-pond）在 **CTC 认证通过**
+#     之后才写，只跑 MPCP + PPPoE 的线路上永远是 0 → 灯永远不亮；
+# 而且"PON 注册成功"本来也不等于"能上网"：PPPoE 可能拨不上、路由/DNS 可能不通。
+#
+# 所以这里改成**主动探测**：周期性请求几个 well-known 站点，任一个通就算能上网：
+#   通 → 绿灯常亮；连续失败 failures 次 → 灭（滞回，避免抖动）。
+# 顺序：先 http 204 端点（响应体最小），再 http 首页；全都失败再 ping 公共 DNS 兜底
+# （有些线路封 ICMP，有些封 HTTP，两条都留着更稳）。
+#
+# 用法（root）：
+#   pon-internet-led watch    # 常驻循环，由 /etc/init.d/pon-internet-led 拉起
+#   pon-internet-led once     # 立刻探一次并更新灯（hotplug 触发 / 手动验证）
+#   pon-internet-led offline  # 确定没网时立刻灭（PPPoE 会话断了）
+#   pon-internet-led on|off   # 直接点灯/灭灯，跳过探测（调试用）
+#   pon-internet-led release  # 把灯还给内核触发器（DTS 里的 pon0-online）
+#   pon-internet-led status   # 打印配置与当前状态
+#
+# 配置（可选，缺省即下面这些值）：/etc/config/pon-led
+#
+#   config internet 'internet'
+#       option enabled '1'
+#       option interval '30'    # 探测周期（秒）
+#       option failures '2'     # 连续失败几次才灭灯
+#       option timeout '5'      # 单个请求超时（秒）
+#       option urls 'http://connect.rom.miui.com/generate_204 http://www.baidu.com/ ...'
+#       option ping_hosts '223.5.5.5 119.29.29.29'
+#
+# 关掉它：/etc/init.d/pon-internet-led stop && /etc/init.d/pon-internet-led disable
+#         （stop 会把灯还给内核触发器）
+#
+# 背景与取证（根因、原厂 LED 表、验证步骤）见 README.zh-CN.md §2.7。
+
+LED_GLOB=${PON_LED_GLOB:-'*:wan-online'}
+STATE_FILE=/var/run/pon-internet-led.state
+
+# ---------- 配置 ----------
+cfg() {
+	local v
+
+	v=$(uci -q get "pon-led.internet.$1" 2>/dev/null)
+	[ -n "$v" ] && printf '%s' "$v" || printf '%s' "$2"
+}
+
+ENABLED=$(cfg enabled 1)
+INTERVAL=$(cfg interval 30)
+FAILURES=$(cfg failures 2)
+TIMEOUT=$(cfg timeout 5)
+URLS=$(cfg urls "http://connect.rom.miui.com/generate_204 http://www.baidu.com/ http://connectivitycheck.platform.hicloud.com/generate_204")
+PING_HOSTS=$(cfg ping_hosts "223.5.5.5 119.29.29.29")
+RELEASE_TRIGGER=$(cfg release_trigger pon0-online)
+
+is_enabled() {
+	case "$ENABLED" in
+	0|off|no|false|disabled) return 1 ;;
+	*) return 0 ;;
+	esac
+}
+
+# ---------- 灯 ----------
+list_leds() {
+	for d in /sys/class/leds/$LED_GLOB; do
+		[ -w "$d/brightness" ] && printf '%s\n' "$d"
+	done
+}
+
+# trigger=none 之后这盏灯只由 brightness 决定，内核触发器不再抢它
+led_write() {
+	local d
+
+	for d in $(list_leds); do
+		case "$1" in
+		on)
+			printf 'none\n' >"$d/trigger" 2>/dev/null
+			printf '1\n' >"$d/brightness" 2>/dev/null
+			;;
+		off)
+			printf 'none\n' >"$d/trigger" 2>/dev/null
+			printf '0\n' >"$d/brightness" 2>/dev/null
+			;;
+		release)
+			printf '%s\n' "$RELEASE_TRIGGER" >"$d/trigger" 2>/dev/null
+			;;
+		esac
+	done
+}
+
+save_state() {
+	printf '%s %s\n' "$1" "$2" >"$STATE_FILE" 2>/dev/null
+}
+
+# ---------- 探测 ----------
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# 单个 URL：2xx/3xx 算通（generate_204 正常就是 204）
+probe_url() {
+	local code
+
+	if have curl; then
+		code=$(curl -4 -sS -o /dev/null -w '%{http_code}' \
+			--connect-timeout "$TIMEOUT" --max-time "$TIMEOUT" "$1" 2>/dev/null)
+		case "$code" in
+		2??|3??) return 0 ;;
+		*) return 1 ;;
+		esac
+	fi
+
+	if have uclient-fetch; then
+		uclient-fetch -q -4 -O /dev/null -T "$TIMEOUT" "$1" >/dev/null 2>&1
+		return $?
+	fi
+
+	return 2
+}
+
+PROBE_VIA=""
+
+probe() {
+	local u h
+
+	PROBE_VIA=""
+	for u in $URLS; do
+		if probe_url "$u"; then
+			PROBE_VIA=$u
+			return 0
+		fi
+	done
+
+	for h in $PING_HOSTS; do
+		if ping -c 1 -W "$TIMEOUT" -q "$h" >/dev/null 2>&1; then
+			PROBE_VIA="ping $h"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+# ---------- 模式 ----------
+mode_once() {
+	is_enabled || {
+		led_write release
+		exit 0
+	}
+
+	if probe; then
+		led_write on
+		save_state on "$PROBE_VIA"
+		echo "online (via $PROBE_VIA)"
+		exit 0
+	fi
+
+	led_write off
+	save_state off -
+	echo "offline (all probes failed)"
+	exit 1
+}
+
+mode_offline() {
+	is_enabled || {
+		led_write release
+		exit 0
+	}
+
+	led_write off
+	save_state off -
+}
+
+mode_watch() {
+	local fail=0 want=off logged=
+
+	is_enabled || {
+		led_write release
+		exit 0
+	}
+
+	logger -t pon-internet-led "watch started: interval=${INTERVAL}s failures=${FAILURES} timeout=${TIMEOUT}s"
+	logger -t pon-internet-led "probes: ${URLS} (+ping: ${PING_HOSTS})"
+
+	# 初值 off：没验证过连通性之前不亮绿灯（宁可先灭，也不能给假的"能上网"）
+	while :; do
+		if probe; then
+			fail=0
+			want=on
+		else
+			fail=$((fail + 1))
+			# 连续失败够 failures 次才改判为断网，否则维持现状（滞回，避免抖动）
+			[ "$fail" -ge "$FAILURES" ] && want=off
+		fi
+
+		# 每轮都幂等地写一次：即使 hotplug 刚在中间改过这盏灯，也会被纠正回来
+		led_write "$want"
+
+		if [ "$logged" != "$want" ]; then
+			logged=$want
+			if [ "$want" = on ]; then
+				save_state on "$PROBE_VIA"
+				logger -t pon-internet-led "online via $PROBE_VIA -> LED on"
+			else
+				save_state off -
+				logger -t pon-internet-led "offline (last failure streak: $fail) -> LED off"
+			fi
+		fi
+
+		sleep "$INTERVAL"
+	done
+}
+
+mode_status() {
+	local d trig
+
+	echo "enabled      : $ENABLED"
+	echo "interval     : ${INTERVAL}s   failures=$FAILURES   timeout=${TIMEOUT}s"
+	echo "urls         : $URLS"
+	echo "ping hosts   : $PING_HOSTS"
+	printf 'last state   : '
+	cat "$STATE_FILE" 2>/dev/null || echo "unknown"
+
+	echo "leds         :"
+	for d in $(list_leds); do
+		trig=$(sed 's/.*\[\([^]]*\)\].*/\1/' "$d/trigger" 2>/dev/null)
+		printf '  %-24s trigger=%-14s brightness=%s\n' "${d##*/}" "$trig" \
+			"$(cat "$d/brightness" 2>/dev/null)"
+	done
+}
+
+case "${1:-status}" in
+watch) mode_watch ;;
+once) mode_once ;;
+offline) mode_offline ;;
+on) led_write on ;;
+off) led_write off ;;
+release) led_write release ;;
+status) mode_status ;;
+*)
+	echo "用法: $0 {watch|once|offline|on|off|release|status}" >&2
+	exit 1
+	;;
+esac
+
+exit 0

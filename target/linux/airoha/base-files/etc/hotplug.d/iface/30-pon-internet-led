@@ -1,0 +1,29 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# 「上网」灯的即时同步：判断逻辑全在 /usr/libexec/pon-internet-led（主动探测互联网），
+# 周期探测由 /etc/init.d/pon-internet-led 里的常驻循环负责，这里只做两件"抢时间"的事：
+#
+#   * PPPoE 会话起来（ifup + DEVICE=pppoe-*）→ 等 3 秒让路由/DNS 就绪后立刻探一次，
+#     不用干等下一个周期；
+#   * PPPoE 会话断了（ifdown）→ 确定没网，立刻灭灯，不用等探测超时。
+#
+# ifdown 事件不带 DEVICE，所以用 /etc/config/network 里的 proto 判断这条接口是不是 PPPoE。
+
+[ -x /usr/libexec/pon-internet-led ] || exit 0
+
+case "$ACTION" in
+ifup|ifupdate)
+	case "$DEVICE" in
+	pppoe-*)
+		( sleep 3; /usr/libexec/pon-internet-led once ) >/dev/null 2>&1 &
+		;;
+	esac
+	;;
+ifdown)
+	[ "$(uci -q get "network.$INTERFACE.proto" 2>/dev/null)" = pppoe ] || exit 0
+	/usr/libexec/pon-internet-led offline >/dev/null 2>&1
+	;;
+esac
+
+exit 0
