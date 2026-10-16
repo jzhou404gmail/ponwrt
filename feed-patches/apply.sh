@@ -102,19 +102,30 @@ for patch in $patches; do
 		continue
 	fi
 
+	# ③ 两个方向都不行：文件里既不是补丁前的样子、也不是补丁后的样子 —— 真冲突。
+	#    这里要把"差在哪、怎么救"直接打出来，否则只能看到一句"套不上"干瞪眼。
+	#    注意不能用 `git apply --numstat` 取文件列表：它 implies --check，对套不上
+	#    的补丁直接报错退出、什么都不输出，所以直接读补丁里的 `+++ b/` 行。
+	targets=$(sed -n 's|^+++ b/||p' "$ROOT/$patch")
+
 	echo "!! 套不上: $patch" >&2
-	echo "!! feeds/$feed 已经被别的改动占住了，或者上游改过同一段代码。" >&2
-	echo "!! 处理办法：cd feeds/$feed && git status 看清现状，再按需重做这个补丁。" >&2
+	echo "!! feeds/$feed 里这些文件既不是套补丁前的样子，也不是套完补丁的样子：" >&2
+	for f in $targets; do
+		echo "!!     $f" >&2
+	done
+	echo "!! 常见两种原因：" >&2
+	echo "!!   a) 文件被手工改过，改法与补丁不完全一致 —— 复位后重跑本脚本即可" >&2
+	echo "!!      （补丁会重新套上，所以不会有东西丢失）：" >&2
+	for f in $targets; do
+		echo "!!        git -C feeds/$feed checkout -- $f" >&2
+	done
+	echo "!!        ./feed-patches/apply.sh" >&2
+	echo "!!   b) 上游改过同一段代码（例如跑过 ./scripts/feeds update -a）——" >&2
+	echo "!!      需要照 feeds/$feed 的现状重做这个补丁，并把 feed-patches/ 下这份同步更新。" >&2
+	echo "!! 先看清楚差在哪：" >&2
+	echo "!!     git -C feeds/$feed status --short" >&2
+	echo "!!     git -C feeds/$feed diff" >&2
 	exit 1
-
-	if [ "$CHECK_ONLY" -eq 1 ]; then
-		echo "==> 需要套用（--check 未改动）: $patch"
-		continue
-	fi
-
-	git -C "feeds/$feed" apply "$ROOT/$patch"
-	echo "==> 已套用: $patch"
-	changed_pkgs="$changed_pkgs $pkgdir"
 done
 
 [ "$CHECK_ONLY" -eq 1 ] && exit 0
