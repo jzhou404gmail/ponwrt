@@ -4,6 +4,29 @@ English | [简体中文](README_zh.md)
 
 PonWrt is based on [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) and adds support for Airoha AN7581 and AN7583 PON devices.
 
+> 📌 **This repository is a fork of [pbs05/ponwrt](https://github.com/pbs05/ponwrt).** It carries a
+> batch of hardware fixes found by debugging real AN7581 / AN7583 ONUs on the bench. The full
+> write-up — symptom, root cause, register-level evidence and how to verify each fix — is in
+> **[README.zh-CN.md](README.zh-CN.md)** (Chinese). The device table, build and install sections
+> below are unchanged from upstream.
+
+## What this fork adds
+
+| Area | Change |
+| --- | --- |
+| Panel LAN LEDs | The netdev triggers were missing entirely (ZN504XG-D / ZN515XG-D / Nokia MD & TF / UNG00A, and the AN7583 XG-040G-MF): the EN8811H driver puts its LED outputs into user-defined mode and the LED core clears the driver's own rules at registration, so without a `netdev` trigger the jack stays dark even with the port linked. |
+| Panel port order | The UNG00A factory DTB reverses the panel order, which left the real LAN4 jack dead. |
+| HG5585F-CT | The GPY211C PHY ID is pinned in the device tree, so a warm reboot can no longer bind the non-negotiating Generic Clause 45 PHY and leave `lan1` at NO-CARRIER. |
+| AN7583 crypto | Kernel AES was entirely software. The ARMv8 Crypto Extensions (AES + GHASH/PMULL), `CRYPTO_CBC`, `CRYPTO_AUTHENC`, AF_ALG and the EIP-93 engine are now enabled, together with the matching userspace packages (`kmod-crypto-hw-eip93`, `kmod-cryptodev`, `libopenssl-devcrypto`). |
+| Wireless defaults | One set of defaults for the three wireless boards: country `CN`, 160 MHz on 5 GHz, separate 2.4/5 GHz SSIDs, WPA2-PSK. Needed because the world regulatory domain has no AP-capable 160 MHz block, so the 5 GHz radio silently disappears at 160 MHz. |
+| PON panel LEDs | The "optical signal" LED keeps the conventional meaning (off when the link is healthy, slow blink when there is no light), and the "internet" LED follows a real reachability probe rather than the PON registration state. |
+| `luci-app-airoha-npu` | The NPU dashboard ported with **WAN = the PON port** instead of the 2.5G copper port, with rewritten WiFi data sources and CDM1/CDM2 CPU DMA cards. |
+| IPTV | Set-top boxes reporting "2001 network unreachable": MAC learning is kept off on the multicast VLAN port. |
+| Build tooling | `build.sh` / `build-watch.sh` / `build-live.sh`, an idempotent mechanism for patching upstream feeds (`feed-patches/`), and `verify-images.sh`, which rejects images that compile but cannot boot. |
+
+This fork keeps **a single main line**: `master` carries upstream plus every fork change, so that is
+the only branch to build from.
+
 ## ⚠️ Disclaimer
 
 PonWrt is an open-source firmware project intended for research and development.
