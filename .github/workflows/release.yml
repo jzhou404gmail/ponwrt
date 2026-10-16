@@ -35,6 +35,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # 需要完整历史：scripts/getver.sh 是靠 `git rev-list <固定提交>..HEAD`
+          # 数提交来算 DISTRIB_REVISION 的，depth=1 的浅克隆里那个提交不存在，
+          # 算出来会是错的 —— 刷完机 `cat /etc/openwrt_release` 就对不上版本。
+          fetch-depth: 0
 
       - name: Free build space
         run: |
@@ -70,6 +75,14 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
+      - name: Apply fork feed patches
+        run: |
+          # feeds/ 不入库：本 fork 改在上游驱动里的修复（EPON 上 pon0-online
+          # 恒灭）是以补丁形式存在 feed-patches/ 的。缺了这一步，CI 编出来的
+          # 固件会**静默缺少**这些修复 —— feeds install 拿到的是未打补丁的源码。
+          # 脚本幂等；补丁套不上时以非 0 退出，整个 job 失败，不会发布错固件。
+          ./feed-patches/apply.sh
+
       - name: Load repository signing key
         env:
           PONWRT_APK_PRIVATE_KEY: ${{ secrets.PONWRT_APK_PRIVATE_KEY }}
@@ -92,6 +105,14 @@ jobs:
 
       - name: Build ${{ matrix.target }}
         run: make -j"$(nproc)"
+
+      - name: Verify images
+        run: |
+          # "编译成功"不等于"能刷"：内核构建树被留在 initramfs 配置上时，
+          # sysupgrade 镜像里会塞进 initramfs 内核（U-Boot inflate 失败 → 无限重启）。
+          # 这就是 verify-images.sh 顶部复盘的那次事故，发布前必须过这道闸；
+          # 不过就以非 0 退出，job 失败，不会产出 release。
+          ./verify-images.sh
 
       - name: Pack ${{ matrix.target }}
         run: |

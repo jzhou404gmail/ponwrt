@@ -43,6 +43,11 @@
   UBI 布局，启动镜像与 Web 恢复由 [AN758x U-Boot](https://github.com/pbs05/uboot-an758x) 提供；
   刷完后经 U-Boot Web 或 LuCI 的 **网络 → PON → 配置 → PON 板卡数据** 回填原厂校准与身份数据
   （FiberHome 的 `factory` 备份需先用 [FiberHome Factory](https://github.com/pbs05/fiberhome-factory) 转换）。
+- **发布（不用自己的机器）**：仓库自带 GitHub Actions。Actions 里手动跑 **`Release PonWrt`**
+  并填一个 tag，就会编出 `ponwrt-an7581.tar.zst` / `ponwrt-an7583.tar.zst` + `sha256sums`
+  并自动建 Release。**用的是 `configs/` 里的项目默认配置**
+  （`kconfig.pl + configs/<target>.config configs/release.config`），**不是任何人的本机 `.config`**
+  —— 后者根本没入库。细节与已知限制见 [README.zh-CN.md](README.zh-CN.md) 第 5.6 节。
 
 ---
 
