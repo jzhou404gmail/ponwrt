@@ -35,7 +35,7 @@
 | 3 | `airoha/an7581`+`an7583` | **面板 LAN 灯触发器缺失**（ZN504XG-D / ZN515XG-D / Nokia MD & TF / UNG00A，以及 an7583 的 XG-040G-MF） | 硬件修复 |
 | 4 | `airoha/an7581` | **UNG00A 面板口序反转** + 启用 PHY1 LED0 | 硬件修复 |
 | 5 | `airoha/an7583` | XG-040G-MF 的 PHY LED 补 `function` / `function-enumerator` | 一致性 |
-| 6 | `airoha/an7581` | HG5585F-CU 四个 LAN 灯：**设备树/`01_leds` 随上游 `91077e9a6b` 合并**，另加 uci-defaults 迁移修**保留配置升级后触发器绑不上**（§2.3.1） | 已并入上游 + 迁移 |
+| 6 | `airoha/an7581` | HG5585F-CU 四个 LAN 灯：**设备树/`01_leds` 随上游 `91077e9a6b` 合并**，另加 uci-defaults 迁移修**保留配置升级后触发器绑不上**（§2.3.1）＋ 补 `kmod-usb-ledtrig-usbport` 让 USB 灯能亮（§2.3.2） | 已并入上游 + 迁移 |
 | 7 | `airoha/an7581` | **HG5585F-CT 热重启后 lan1 NO-CARRIER**（GPY211C PHY ID 竞态） | 硬件修复 |
 | 8 | `luci-app-airoha-npu` | NPU/Frame Engine 面板移植，**WAN = PON 口** | 新功能 |
 | 9 | `base-files` | **IPTV 机顶盒报 2001** 的组播 VLAN MAC 学习修复 | 功能修复 |
@@ -199,8 +199,8 @@ case 里给它们绑 netdev 触发。
 ls /sys/class/leds/ | grep 'blue:lan'       # 期望 4 个：blue:lan-1 .. blue:lan-4
 cat /sys/class/leds/blue:lan-1/trigger      # 期望 [netdev] —— 若是 [none] 就是没绑上，见 §2.3.1
 cat /sys/class/leds/blue:lan-1/device_name  # 期望 lan1
-uci show system | grep led_lan              # 期望 4 段，sysfs 都是 blue:lan-N
-# 逐口插线：对应口的灯亮，并随 link/tx/rx 变化
+uci show system | grep led_                 # 期望 6 段：led_lan1..4 + led_usb1/2，sysfs 与类设备一一对应
+# 逐口插线：对应口的灯亮，并随 link/tx/rx 变化（有流量时闪是正常的，见 §2.3.1）
 ```
 
 > 📌 `dmesg | grep -i 'PHY LED pinctrl'` 在 **CU / CT 上有 4 条
@@ -272,17 +272,43 @@ config led 'led_lan2'
 **只有"刷机时清配置"的全新安装才会自动带上这 4 段。**
 
 **修复（代码侧）**：新增
-`target/linux/airoha/an7581/base-files/etc/uci-defaults/99-hg5585f-cu-lan-leds`。
-uci-defaults 在每次刷机后的首次启动都会重跑，脚本做两件事：
+`target/linux/airoha/an7581/base-files/etc/uci-defaults/99-hg5585f-cu-leds`。
+uci-defaults 在每次刷机后的首次启动都会重跑，脚本分两半（对应上面两条到达路径）：
 
-1. 删掉**指向已撤掉 PHY LED0 类设备**的 `config led` 段（只认那 4 个名字，
-   别的段即使类设备不在也一律不动 —— 那可能是用户自己配的）；
-2. 给还没有任何段指认的 `blue:lan-N` 补 `netdev` + `link tx rx` + `dev lanN`。
+1. **改名**（陈旧 PHY LED0 段）：用上游自己的机制
+   `migrate_leds()`（`/lib/functions/migrations.sh`，ath79 / ramips / ipq40xx 等
+   **15 个 target** 都在 `04_led_migration` 里用它），把那 4 个老类设备名
+   `sed` 成 `blue:lan-N`。**改名而不是删掉重建 —— 用户手改过的 `mode`、或加过的
+   自定义 option 会原样留下**（实测：`mode 'link'` 和 `option custom` 都保留了）。
+2. **补齐**：给"还没有任何段指认"的类设备补上触发。这一半 `migrate_leds` 帮不上忙
+   （它只会给已存在的段改名），而同步之前的 CU 恰恰一个段都没有。
 
-幂等：全新安装时 4 段都已存在 → 脚本什么都不做；手工修过的机器再刷一次也是空操作。
-三条路径都在真机上跑过（陈旧配置 / 全新安装 / 无 led 段的旧安装）。
+补的**不只是 4 个 LAN 灯，而是 `01_leds` 给这块板描述的 6 个**（LAN1-4 + 两个 USB），
+规则就是"让 UCI 与全新安装一致"：
 
-**修复（本轮手工，等效于上面脚本）**：这台机器上只有 `led_lan2/3/4` 三段陈旧配置
+```
+led_lan1 blue:lan-1 netdev  lan1
+led_lan2 blue:lan-2 netdev  lan2
+led_lan3 blue:lan-3 netdev  lan3
+led_lan4 blue:lan-4 netdev  lan4
+led_usb1 blue:usb-1 usbport usb3-port1 usb4-port1
+led_usb2 blue:usb-2 usbport usb1-port1 usb2-port1
+```
+
+幂等、且刻意收窄：只改那 4 个老名字，只补"类设备存在且没有任何段指认"的；
+段名被占用时退回 `led_lanN_cu`，绝不覆盖用户自己的段。
+
+真机上跑过的路径（用 `UCI_CONFIG_DIR` + 沙箱 `uci` 包装，不碰实机配置）：
+
+| 路径 | 期望 | 结果 |
+|---|---|---|
+| 陈旧配置（旧名 + 自改过的 mode/option） | 3 段改名且选项保留 + 补 3 段 | ✅ |
+| 全新安装（6 段齐） | 一字不改 | ✅ |
+| 同步前的旧安装（一个 led 段都没有） | 补 6 段 | ✅ |
+| 再跑一次 | 一字不改 | ✅ |
+| 段名被用户占用 | 退回 `_cu` 名，用户段不动 | ✅ |
+
+**修复（本轮手工，等效于上面脚本的 1+2）**：这台机器上只有 `led_lan2/3/4` 三段陈旧配置
 （没有 `led_lan1`），先删掉再补 4 段：
 
 ```sh
@@ -302,9 +328,46 @@ uci commit system && /etc/init.d/led restart
 面板上 LAN1/LAN3 亮、LAN2/LAN4 灭，与内核报的 carrier 一一对应（当时 LAN2 插着线但
 对端 IPTV 机顶盒没开机，所以 NO-CARRIER 是对的，不是故障）。
 
+> 🔎 **LAN1 看起来在"闪"是正常的**：`mode "link tx rx"` 下 netdev 触发器在有流量时
+> 会翻转亮度比特（`netdev_trig_work()` 里 `led_blink_set_oneshot(..., invert)`），
+> 所以拿 `cat brightness` 采样会看到 0/1 交替。要判断"灯亮不亮"，看 `carrier` 与
+> `link` 模式位，别拿单次 `brightness` 采样下结论。
+
 > 🧭 **一句话教训**：面板灯不亮时，先 `cat /sys/class/leds/<类设备>/trigger` 看是不是
 > `[none]`，再 `uci show system | grep led` 看 UCI 指的是不是**本镜像里真实存在**的类设备名。
 > 设备树和 `01_leds` 都对，也照样可能因为**保留配置升级**而全灭。
+
+#### 2.3.2 CU / CT 的两个 USB 灯从来没亮过（缺一个 kmod）`[实测]`
+
+查 §2.3.1 时顺手发现的**另一个独立问题**，与保留配置升级无关 —— **全新安装也一样**：
+
+* 设备树里有 `led-usb1` / `led-usb2`（GPIO6 / GPIO8，低有效，
+  `an7581-fiberhome-hg5585f-common.dtsi`），`01_leds` 也给 CU 绑了 `usb1`+`usb2`、
+  给 CT 绑了 `usb1`，`trigger` 都是 **`usbport`**；
+* 但这两块板子的 `DEVICE_PACKAGES`（`Device/fiberhome_hg5585f-common`，
+  `target/linux/airoha/image/an7581.mk`）里有 `kmod-leds-gpio` 却**没有
+  `kmod-usb-ledtrig-usbport`**，所以 `usbport` 触发器根本不存在；
+* 后果：这两个 LED 类设备在 `trigger` 列表里**找不到 `usbport`**，
+  绑不上、永远不亮，日志里只有一条"触发器不存在"。
+
+实测（CU，192.168.32.254）：
+
+```sh
+grep -c usbport /sys/class/leds/blue:usb-1/trigger    # 0 —— 列表里没有 usbport
+ls /lib/modules/*/ | grep ledtrig                     # 空 —— 模块根本没进镜像
+grep -n usb-ledtrig target/linux/airoha/image/an7581.mk
+#   290/354/371 行：别的机型都带了，5585F 这一块漏了
+```
+
+**修复**：给 `Device/fiberhome_hg5585f-common` 的 `DEVICE_PACKAGES` 补上
+`kmod-usb-ledtrig-usbport`（内核里 `CONFIG_USB_LEDS_TRIGGER_USBPORT=m` 已经编好，
+`bin/targets/airoha/an7581/packages/` 里也有这个 kmod 包，纯粹是设备包清单漏了）。
+补上之后 CU 的两个 USB 灯、CT 的一个才真正能被 `usbport` 触发点亮。
+
+> 顺带说明为什么 §2.3.1 的迁移要把这 2 个 USB 段一起补：一旦 kmod 补上，
+> 保留配置升级过来的机器同样缺这两段（它们和 LAN 段是同一份 `01_leds` 产生的），
+> 只补 LAN 就等于把同一个坑再踩一遍。
+
 
 > ⚠️ **CT 别和 CU 搞混**：CT 与 CU 共用 `an7581-fiberhome-hg5585f-common.dtsi`，
 > 所以 **CT 的设备树里同样有这 4 个 `led-lanN` 节点**，但 `01_leds` 只给
@@ -1168,7 +1231,7 @@ dmesg | grep -i "NPU fw version"
 | 2.5G 口 LED | ZN504XG-D / ZN515XG-D / Nokia MD & TF / UNG00A | `cat /sys/class/leds/mt7530-0:0f:green:lan-1/trigger` → `[netdev]`；插 2.5G 网线看灯 |
 | 2.5G 口 LED（an7583） | XG-040G-MF | 这台的名字长得多，要带前缀：`cat '/sys/class/leds/1fb00000.system-controller:mdio-bus@c8-mii:0f:green:lan-1/trigger'` → `[netdev]`；插 2.5G 网线看 LED2.5（前缀由来见 §2.1） |
 | 面板口序 | UNG00A | 四根线分别插 LAN1..4，`ip -br link` 看 carrier 是否落在 lan1..4（**不是**按 port 顺序） |
-| 四个 LAN 灯 | HG5585F-CU | ① `ls /sys/class/leds/` 应出现 4 个 `blue:lan-*`（**不是** `mt7530-0:*:green:lan-*`，那是已撤掉的 PHY LED0 方案）；② **`cat /sys/class/leds/blue:lan-1/trigger` 必须是 `[netdev]`** —— 若是 `[none]`，说明 UCI 没绑上（保留配置升级的常见坑，见 §2.3.1），查 `uci show system \| grep led_lan` 的 sysfs 是不是本镜像里真实存在的类设备名；③ `device_name` → `lan1`；④ **逐口插线看灯**；⑤ `dmesg \| grep -i 'leds-gpio'` 不应报无法申请 GPIO43-46；⑥ `dmesg` 里的 4 条 `Failed to setup PHY LED pinctrl` 是**正常的**，见 §2.3 |
+| 六个面板 LED 绑定 | HG5585F-CU | ① `ls /sys/class/leds/` 应出现 4 个 `blue:lan-*`（**不是** `mt7530-0:*:green:lan-*`，那是已撤掉的 PHY LED0 方案）＋ `blue:usb-1/2`；② **`cat /sys/class/leds/blue:lan-1/trigger` 必须是 `[netdev]`** —— 若是 `[none]`，说明 UCI 没绑上（保留配置升级的常见坑，见 §2.3.1），查 `uci show system \| grep led_` 的 sysfs 是不是本镜像里真实存在的类设备名；③ `device_name` → `lan1`；④ **逐口插线看灯**；⑤ `grep -c usbport /sys/class/leds/blue:usb-1/trigger` 应 ≥1（=0 说明 `kmod-usb-ledtrig-usbport` 没进镜像，见 §2.3.2）；⑥ `dmesg \| grep -i 'leds-gpio'` 不应报无法申请 GPIO43-46；⑦ `dmesg` 里的 4 条 `Failed to setup PHY LED pinctrl` 是**正常的**，见 §2.3 |
 | lan1 冷启动一致性 | HG5585F-CT | `reboot`（热重启）后立刻 `cat /sys/class/net/lan1/carrier`，应看到 `1`；`dmesg \| grep -i "GPY211\|Clause 45"` 不应出现 Generic Clause 45 PHY |
 | 内核硬件加密（AN7583） | XG-040G-MF | ① `grep -A3 '^name         : ecb(aes)$' /proc/crypto` → 期望 `driver: ecb(aes-ce)`（同类还有 `cbc(aes-ce)` / `ctr(aes-ce)`）；② `grep -A3 '^name         : gcm(aes)$' /proc/crypto` → 期望 `gcm_base(ctr-aes-ce,ghash-ce)`；③ `grep -c eip93 /proc/crypto` > 0、`lsmod \| grep -E "eip93\|cryptodev"` 有两条；④ 用户态本来就硬件，刷完 `/tmp/aes-check` 应仍是 `armcap=0x3d`、`aes-128-gcm ~570 MB/s`。完整清单见 §2.8 末尾 |
 | 无线默认值（CN / 160MHz / SSID / WPA2-PSK） | HG5585F-CT / HG5585F-CU / ZN515XG-D | `jsonfilter -i /etc/board.json -e '@.wlan.defaults'` 应见 `country:"CN"`、`widths.5g:"160"`、`ssids.2g/5g`；`uci show wireless \| grep -E "country\|htmode"` 应见 `country='CN'` 与 `htmode='HE160'`；`uci show wireless \| grep -E "ssid\|encryption\|key"` 应见 2.4G=`ImmortalWrt` / 5G=`ImmortalWrt_5G`、两侧 `encryption='psk2'` 且 `key='12345678'`；`iw dev phy1-ap0 info \| grep width` 应见 `width: 160 MHz`；手机能搜到**两个** SSID，用 `12345678` 能连上（随后自己去 LuCI 改密码） |
@@ -1211,7 +1274,7 @@ cp docs/luci-app-airoha-npu-port/01_leds.before \
 | # | 项目 | 状态 |
 |---|---|---|
 | 1 | §2.5 的 XG-040G-MF LED 命名补全 | 标 `[补全]`，未单独上机验证（只影响类设备命名，风险低） |
-| 2 | §2.3 的 HG5585F-CU 四个 LAN 灯 | 已改用上游 `91077e9a6b` 的方案（GPIO43-46 gpio-leds + `01_leds` netdev 触发），本 fork 原先的 PHY LED0 mux 路线已撤销。硬件已复验（逐脚驱动 GPIO43-46，四个灯全亮）。**但 2026-10-16 的"已上机确认正常"结论不成立**：那次是在 sysfs 里临时绑触发看到的，没落到 `/etc/config/system`，重启即失效；保留配置升级的机器上四个触发绑不上、灯全灭，已补 uci-defaults 迁移（§2.3.1） |
+| 2 | §2.3 的 HG5585F-CU 四个 LAN 灯 | 已改用上游 `91077e9a6b` 的方案（GPIO43-46 gpio-leds + `01_leds` netdev 触发），本 fork 原先的 PHY LED0 mux 路线已撤销。硬件已复验（逐脚驱动 GPIO43-46，四个灯全亮）。**但 2026-10-16 的"已上机确认正常"结论不成立**：那次是在 sysfs 里临时绑触发看到的，没落到 `/etc/config/system`，重启即失效；保留配置升级的机器上触发器绑不上、灯全灭。已补 uci-defaults 迁移 `99-hg5585f-cu-leds`（用上游 `migrate_leds()` 改名 + 补齐 6 段），五条路径真机验证（§2.3.1）。另发现 USB 灯因缺 `kmod-usb-ledtrig-usbport` 从来没亮过，已补（§2.3.2，与升级无关，全新安装也一样） |
 | 3 | §2.4 的 HG5585F-CT GPY211C | 结论基于复位时序竞态分析，需在真机上做一次热重启核对 |
 | 4 | 机型覆盖 | 修复的根因取证与刷机回归以 **ZN504XG-D** 为主力机型（UNG00A 的口序结论有换线实测记录）。其余 11 个机型已一起编译出固件，但未逐个上机验证，按 §6.2 自检即可 |
 | 5 | §2.7.3 的「上网」灯（主动探测） | 逻辑写好并编译进镜像，**等实机确认**：能上网 → 常亮，断网/拔纤 → 30 秒内灭；`pon-internet-led once` 可手动验证一次探测。若你常用的站点被列在探测表之外，改 `/etc/config/pon-led` 的 `urls` 即可 |
