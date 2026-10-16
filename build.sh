@@ -135,6 +135,14 @@ fi
 
 mkdir -p tmp
 
+# ---------- 上游 feed 补丁（幂等） ----------
+# feeds/ 不入库，我们改在上游驱动里的修复以补丁形式存在 feed-patches/，
+# 这里在 make 之前套一遍：套过了就跳过，刚套上的会清掉 build_dir 旧拷贝，
+# 保证增量编译用的是改过的源码。细节见 feed-patches/apply.sh 顶部注释。
+if [ -x feed-patches/apply.sh ]; then
+	./feed-patches/apply.sh
+fi
+
 # ---------- 并发保护 ----------
 # 同一棵树里并行跑两个 make 会同时写 build_dir/ 与 staging_dir/，
 # 症状是 libunistring/perl 之类完全无关的包"随机"编译失败 —— 极难排查。

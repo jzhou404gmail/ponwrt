@@ -1,0 +1,44 @@
+diff --git a/airoha-xpon/src/airoha-xpon-leds.c b/airoha-xpon/src/airoha-xpon-leds.c
+index 29bb9df..1032773 100644
+--- a/airoha-xpon/src/airoha-xpon-leds.c
++++ b/airoha-xpon/src/airoha-xpon-leds.c
+@@ -112,6 +112,30 @@ void airoha_xpon_leds_destroy(void *data)
+ 	kfree(leds);
+ }
+ 
++/*
++ * Is the PON service usable, i.e. may the Internet LED be lit?
++ *
++ * XGS-PON/G-PON learn this from OMCI: service_ready is set once the
++ * deferred unicast data paths have been applied.
++ *
++ * EPON has no OMCI step. service_ready is then written only by the
++ * userspace OAM agent (airoha-pond), and only after the OLT completed
++ * CTC authentication. A line that registers with plain MPCP and runs
++ * PPPoE on top never reaches that state, so the Internet LED stayed dark
++ * even though the LLID was registered and the data path carried traffic.
++ * Registration is the EPON equivalent of service-ready, exactly as the
++ * registration LED below already assumes.
++ */
++static bool airoha_xpon_leds_service_ready(struct airoha_xpon *xpon)
++{
++	if (READ_ONCE(xpon->active_mode_valid) &&
++	    airoha_xpon_mode_is_epon(READ_ONCE(xpon->active_mode)))
++		return READ_ONCE(xpon->epon.mpcp_state) ==
++		       AIROHA_EPON_MPCP_REGISTERED;
++
++	return READ_ONCE(xpon->service_ready);
++}
++
+ void airoha_xpon_leds_update(struct airoha_xpon *xpon)
+ {
+ 	struct airoha_xpon_leds *leds = xpon->leds;
+@@ -127,7 +151,7 @@ void airoha_xpon_leds_update(struct airoha_xpon *xpon)
+ 	los = line_running && !optical_signal ? AIROHA_XPON_LED_SLOW_BLINK :
+ 	                                        AIROHA_XPON_LED_OFF;
+ 	online = line_running && optical_signal &&
+-	                         READ_ONCE(xpon->service_ready) ?
++	                         airoha_xpon_leds_service_ready(xpon) ?
+ 	                 AIROHA_XPON_LED_ON :
+ 	                 AIROHA_XPON_LED_OFF;
+ 
