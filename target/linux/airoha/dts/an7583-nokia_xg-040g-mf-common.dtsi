@@ -63,8 +63,8 @@
 			color = <LED_COLOR_ID_RED>;
 			function = LED_FUNCTION_WAN;
 			gpios = <&an7583_pinctrl 27 GPIO_ACTIVE_LOW>;
-			/* The LOS LED follows optical signal loss. */
-			linux,default-trigger = "pon0-los";
+			/* Light received -> steady on, loss -> blink (see pon0-signal). */
+			linux,default-trigger = "pon0-signal";
 		};
 
 		led-5 {
