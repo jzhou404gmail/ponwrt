@@ -49,5 +49,9 @@ git-src
 /clone-sda/
 /shutdown-analyze.sh
 
+# 厂商资料与 SDK 的大体积拷贝（Airoha_Doc / airoha_sdk，约 160 MB）：
+# 只作本地参考，构建不使用，不入库
+/Airoha/
+
 # python 缓存（体检脚本被 import 时会生成）
 __pycache__/
