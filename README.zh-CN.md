@@ -1436,6 +1436,8 @@ docs/an7583-armv8-crypto-check.md              AN7583 硬件加密核查（硬�
 docs/an7583-aes-check.c                        用户态探针：打印 OPENSSL_armcap_P 与真实吞吐
 docs/an7583-eip93-probe-test.c                 EIP-93 只读寄存器探针模块（证明硬件存在）
 docs/xg-040g-mf-an7583-2p5g-fix.md             XG-040G-MF 2.5G 口三个症状的完整排查记录
+docs/xg-040g-tx-power-ddmi.md                  XG-040G-MD 发射功率 -40 dBm：EN7572 BOB
+                                              A0/A2 标定表与「模式挑了没标定的那张」
 feed-patches/apply.sh                         上游 feed 补丁（幂等）套用脚本：--check 只看状态、
                                               --reset 复位后重套；区分「git 用不了」与
                                               「补丁真冲突」两种报错。build.sh 与顶层 make 都调
@@ -1443,6 +1445,8 @@ include/toplevel.mk                           挂 feed-patches-apply（任何 ma
                                               + git/REVISION 自检（§5.1.1）
 feed-patches/pon_drivers/airoha-xpon/
     0001-*.patch                               EPON 上 pon0-online 触发器不再死灯
+feed-patches/pon_drivers/airoha-pon-frontends/
+    0001-*.patch                               模式改从已标定的 BOB 表取模拟参数（-40 dBm）
 target/linux/airoha/base-files/usr/libexec/
     pon-internet-led                           「上网」灯 = 主动探测互联网（通=常亮、连续失败=灭）
 target/linux/airoha/base-files/etc/init.d/
@@ -1453,6 +1457,7 @@ docs/luci-app-airoha-npu-port/README.md       移植全过程、根因取证、�
 docs/iptv-udpxy-omcproxy-guide.md             udpxy + omcproxy 完整指南（已脱敏）
 docs/pon-link-watch.sh                        PON 光功率/温度/注册计数器定时光采样
 docs/pon-led-diag.sh                          面板灯取证：触发器/亮度/线路状态 + 逐个点亮对面板
+docs/pon-txpwr-probe.sh                       直接读写 EN7572 模拟寄存器，施加/回退 A2 标定值
 docs/luci-app-airoha-npu-port/tests/          渲染回归测试 + 真机 fixture（MAC 已占位）
 ```
 
