@@ -135,10 +135,63 @@ fi
 
 mkdir -p tmp
 
+# ---------- 环境自检：git 必须真的能用 ----------
+# 这台机器（2026-10-14 的自动 apt 升级起）没有系统 git 包了：那次升级顺手把
+# git 删掉，只留下 ~/.local/bin/git —— 一个包装脚本，要求 PATH 里有 ~/.local/bin
+# 且 $HOME 指向 /home/jzhou。于是"有没有 git"取决于你从哪个 shell 跑。
+#
+# 缺 git 时**不会**有像样的报错，只会静默走样，2026-10-17 那次两条路一起翻车：
+#   * feed-patches/apply.sh 的三个 `git apply --check` 全失败 → 误报"套不上"，
+#     让人以为是补丁坏了（真去改补丁就白费功夫）；
+#   * scripts/getver.sh 拿不到版本 → REVISION=unknown，整棵树的包版本换一套
+#     （base-files 从 1943~a57faf93c6 变成 1943~unknown），增量状态错乱，
+#     随机包报 "failed to build" —— 那次是 25 分钟之后才在 base-files 上炸。
+# 所以在开工前先拦下来，并把修法写在脸上。
+git_hint() {
+	echo "" >&2
+	echo "!! 编译前自检没过：git 用不了（$1）" >&2
+	echo "!! 缺 git 不会报错，只会静默走样：补丁判定全失败（误报“套不上”）、" >&2
+	echo "!! 版本号变成 unknown（整棵树的包版本换一套，随机包 failed to build）。" >&2
+	echo "!! 先自查：git --version ; git -C \"\$PWD\" rev-parse --git-dir ; scripts/getver.sh" >&2
+	echo "!! 一劳永逸（恢复系统 git，PATH/HOME 怎么变都不会再踩）：" >&2
+	echo "!!     sudo apt-get install -y git" >&2
+	echo "" >&2
+}
+
+# PATH 里没有 git 时先兜一下本机那份用户态 git（README §5.1.1）。这一步很关键：
+# build.sh 的 PATH 会传给 make，于是 getver.sh 也能拿到正确版本；不兜的话，连
+# build.sh 自己都会被下面的自检拦住。
+if ! command -v git >/dev/null 2>&1; then
+	for d in "$HOME/.local/bin" /usr/local/bin; do
+		if [ -x "$d/git" ]; then
+			echo "==> PATH 里没有 git，改用 $d/git（README §5.1.1；一劳永逸的修法是 sudo apt-get install -y git）"
+			PATH="$d:$PATH"
+			export PATH
+			break
+		fi
+	done
+fi
+
+if ! command -v git >/dev/null 2>&1; then
+	git_hint "PATH 里找不到 git"
+	exit 1
+fi
+if ! git -C "$PWD" rev-parse --git-dir >/dev/null 2>&1; then
+	git_hint "git 打不开 $PWD 这个仓库"
+	exit 1
+fi
+REVISION_NOW=$(scripts/getver.sh 2>/dev/null || true)
+if [ "$REVISION_NOW" = "unknown" ] || [ -z "$REVISION_NOW" ]; then
+	git_hint "scripts/getver.sh 给出的版本是 '${REVISION_NOW:-空}'"
+	exit 1
+fi
+
 # ---------- 上游 feed 补丁（幂等） ----------
 # feeds/ 不入库，我们改在上游驱动里的修复以补丁形式存在 feed-patches/，
 # 这里在 make 之前套一遍：套过了就跳过，刚套上的会清掉 build_dir 旧拷贝，
 # 保证增量编译用的是改过的源码。细节见 feed-patches/apply.sh 顶部注释。
+# （顶层的 `make` 也会做这一步，见 include/toplevel.mk 的 feed-patches-apply 目标，
+#   所以直接跑 make 不会漏掉补丁。）
 if [ -x feed-patches/apply.sh ]; then
 	./feed-patches/apply.sh
 fi
@@ -195,7 +248,7 @@ PKGS=$(grep -c '^CONFIG_PACKAGE_.*=y' .config 2>/dev/null || true)
 #  真实报错只在这份日志里，tmp/build.log 只有一行 "ERROR: ... failed to build."）
 export BUILD_LOG=1
 
-echo "==> 并行度 ${JOBS} · 已选 ${PKGS} 个包 · 机型 $(grep -cE '^CONFIG_TARGET_DEVICE_.*=y' .config 2>/dev/null || echo '?') 个"
+echo "==> 并行度 ${JOBS} · 已选 ${PKGS} 个包 · 机型 $(grep -cE '^CONFIG_TARGET_DEVICE_.*=y' .config 2>/dev/null || echo '?') 个 · 版本 ${REVISION_NOW}"
 echo "==> 详细日志: ${LOG} · 每个包的日志: logs/<包>/compile.txt   （也可另开终端跑 ./build.sh --watch）"
 echo
 
@@ -247,10 +300,15 @@ while :; do
 	if [ "$RC" -eq 0 ]; then
 		echo
 		echo "==> 产物体检（verify-images.sh）：确认每个 .itb 都能刷"
-		# 注意：必须先把退出码存下来再判断 —— if cmd; then ...; fi 这个复合命令
+		# 注意 ①：必须先把退出码存下来再判断 —— if cmd; then ...; fi 这个复合命令
 		# 自身返回 0，$? 拿不到 cmd 的真实状态。
-		./verify-images.sh
-		VRC=$?
+		# 注意 ②：脚本开头是 `set -e`，裸跑 `./verify-images.sh` 在它返回非 0 时会
+		# **直接结束整个脚本**（下面的自愈代码一行都执行不到，只会看到"编译结束
+		# （未走完正常收尾）"）。所以必须用 `|| VRC=$?` 把失败"接住"，让它变成
+		# 一个被判断的值。2026-10-17 实测踩到：体检报了"内核是 initramfs 的"，
+		# 自愈却没跑，镜像就那么留在 bin/ 里。
+		VRC=0
+		./verify-images.sh || VRC=$?
 		if [ "$VRC" -eq 0 ]; then
 			break
 		fi
@@ -261,8 +319,15 @@ while :; do
 			SUBTARGET=$(sed -n 's/^CONFIG_TARGET_SUBTARGET="\(.*\)"/\1/p' .config)
 			echo
 			echo "!! 内核产物不对（这一类是可以自愈的）：清掉内核构建树重新编一遍"
-			echo "!! 目录: build_dir/target-*/${BOARD}_${SUBTARGET}"
-			rm -rf build_dir/target-*/"${BOARD}_${SUBTARGET}"
+			# 目录名是 KERNEL_BUILD_DIR = $(BUILD_DIR)/linux-$(BOARD)_$(SUBTARGET)
+			# （include/kernel.mk:46）—— 是 `linux-airoha_an7581`，不是
+			# `airoha_an7581`。原先少了 `linux-` 前缀，rm 什么都没删掉，
+			# "自愈"其实是空转，重编出来的还是那份 initramfs 内核。
+			for kdir in build_dir/target-*/linux-"${BOARD}_${SUBTARGET}"; do
+				[ -d "$kdir" ] || continue
+				echo "!! 目录: $kdir"
+				rm -rf "$kdir"
+			done
 			RC=1
 			continue
 		fi

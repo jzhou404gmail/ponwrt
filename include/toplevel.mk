@@ -8,6 +8,19 @@ export IS_TTY=$(if $(MAKE_TERMOUT),1,0)
 
 include $(TOPDIR)/include/verbose.mk
 
+# 本机（deepin）2026-10-14 的自动 apt 升级把系统 git 包删了，只剩下
+# ~/.local/bin/git 这个包装脚本，而 ~/.local/bin 只有登录 shell 的 PATH 里才有。
+# PATH 里找不到 git 时补上它 —— 否则下面 getver.sh 会给出 unknown，包版本整棵树
+# 换一套（base-files 由 1943~a57faf93c6 变成 1943~unknown），增量状态随之错乱。
+# 详见 README §5.1.1。其它机器上 git 本来就找得到，这里什么都不做。
+ifeq ($(shell command -v git 2>/dev/null),)
+  GIT_LOCAL_DIR:=$(patsubst %/git,%,$(firstword $(wildcard $(HOME)/.local/bin/git /usr/local/bin/git)))
+  ifneq ($(GIT_LOCAL_DIR),)
+    $(info 注意: PATH 里没有 git，改用 $(GIT_LOCAL_DIR)/git（README §5.1.1；一劳永逸: sudo apt-get install -y git）)
+    export PATH:=$(GIT_LOCAL_DIR):$(PATH)
+  endif
+endif
+
 ifeq ($(SDK),1)
   include $(TOPDIR)/include/version.mk
 else ifeq ($(filter-out 0,$(MAKELEVEL))$(origin REVISION)$(origin SOURCE_DATE_EPOCH),$(MAKELEVEL)environmentenvironment)
@@ -15,6 +28,21 @@ else ifeq ($(filter-out 0,$(MAKELEVEL))$(origin REVISION)$(origin SOURCE_DATE_EP
 else
   REVISION:=$(shell $(TOPDIR)/scripts/getver.sh)
   SOURCE_DATE_EPOCH:=$(shell $(TOPDIR)/scripts/get_source_date_epoch.sh)
+
+  # getver.sh 拿不到 git 时给的是 "unknown"。从 tarball 编译（没有 .git）时那
+  # 是上游的正当用法，但如果仓库就在这儿、git 却用不了，REVISION=unknown 会让
+  # 包版本整棵树换一套（base-files 从 1943~a57faf93c6 变成 1943~unknown），
+  # 增量状态随之错乱 —— 2026-10-17 那次随机包 "failed to build" 就是这么来的。
+  # 编译类目标直接拦下（配置/下载类目标只提醒，那些没有 git 也能用）。
+  ifneq ($(wildcard $(TOPDIR)/.git),)
+    ifeq ($(REVISION),unknown)
+      ifeq ($(filter world package/% target/% tools/% toolchain/%,$(if $(MAKECMDGOALS),$(MAKECMDGOALS),world)),)
+        $(warning 警告: git 不在 PATH 里，REVISION 变成 "unknown"。配置/下载类目标还能用，但编译出来的版本号会跟已编出来的东西对不上。修法: sudo apt-get install -y git)
+      else
+        $(error git 不在 PATH 里，getver.sh 只能给出 unknown —— 包版本会整棵树换一套（base-files 从 1943~a57faf93c6 变成 1943~unknown），增量编译状态因此错乱、随机包报 failed to build。本机上 git 只剩 ~/.local/bin/git 这个依赖 HOME 的包装脚本，换个 shell（桌面终端/sudo/cron）就可能没有。修法: sudo apt-get install -y git)
+      endif
+    endif
+  endif
 endif
 
 export REVISION
@@ -74,6 +102,19 @@ ULIMIT_FIX=_limit=`ulimit -n`; [ "$$_limit" = "unlimited" -o "$$_limit" -ge 1024
 
 prepare-mk: $(STAGING_DIR_HOST)/.prereq-build FORCE ;
 
+# feeds/ 是上游 feed 的检出，本 fork 必须在它上面套的修复放在 feed-patches/。
+# 这一步原来只有 build.sh（和 CI workflow）各做一遍，**直接 `make` 的人就漏了** ——
+# 编出来的固件静默缺少这些修复（症状：EPON 上 pon0-online 恒灭，而构建日志一切正常）。
+# 挂在 prepare-tmpinfo 上：它是任何目标（world / package/x/compile / download）
+# 都必经的第一步，而且外层 make 是 .NOTPARALLEL 的，顺序不会乱。脚本幂等，CI 里
+# 那一步留着也无害。
+# 没取 feed 时 apply.sh 只提醒、不拦（没有补丁可套）；feed 在、git 却用不了时它会
+# 带修法直接失败 —— 那是环境问题，不能装作没事继续编。
+# 注意目标名不能叫 `feed-patches` —— 那个目录真实存在，make 会认为目标"已是最新"，
+# 配方根本不会跑（踩过一次：规则写在图上，命令一次都没执行）。
+feed-patches-apply: FORCE
+	@[ ! -e $(TOPDIR)/feed-patches/apply.sh ] || sh $(TOPDIR)/feed-patches/apply.sh
+
 ifdef SDK
   IGNORE_PACKAGES = linux
 endif
@@ -98,7 +139,7 @@ tmpinfo_gen=[ $(1) -nt tmp/.packageinfo ] && [ $(1) -nt scripts/package-metadata
 	[ $(1) -nt scripts/metadata.pm ] || \
 	./scripts/package-metadata.pl $(2) tmp/.packageinfo > $(1) || { rm -f $(1); false; }
 
-prepare-tmpinfo: FORCE
+prepare-tmpinfo: feed-patches-apply FORCE
 	@+$(MAKE) -r -s $(STAGING_DIR_HOST)/.prereq-build $(PREP_MK)
 	mkdir -p tmp/info feeds
 	[ -e $(TOPDIR)/feeds/base ] || ln -sf ../package $(TOPDIR)/feeds/base
@@ -308,6 +349,6 @@ distclean:
 ifeq ($(findstring v,$(DEBUG)),)
   .SILENT: symlinkclean clean dirclean distclean config-clean download help tmpinfo-clean .config scripts/config/mconf scripts/config/conf menuconfig $(STAGING_DIR_HOST)/.prereq-build tmp/.prereq-package prepare-tmpinfo
 endif
-.PHONY: help FORCE
+.PHONY: help FORCE feed-patches-apply
 .NOTPARALLEL:
 

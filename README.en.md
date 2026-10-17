@@ -101,6 +101,19 @@ make -j$(nproc)
 
 Images are written to `bin/targets/airoha/an7581/` or `bin/targets/airoha/an7583/`.
 
+> **`make` on its own is enough** — it applies the fork's upstream-feed patches
+> (`feed-patches/`, see below) before anything is built, so a plain `make -j$(nproc)`
+> produces the same firmware as `./build.sh`. `./build.sh` adds convenience on top:
+> a progress display, a concurrency lock, per-package logs, two self-healing paths,
+> a version/`git` preflight and the image check in section 5.5.
+>
+> **`git` must really be in `PATH`.** The check is silent when it fails: the feed-patch
+> step reports a bogus "patch does not apply", and `scripts/getver.sh` returns `unknown`,
+> which changes every package version in the tree (base-files goes from `1943~a57faf93c6`
+> to `1943~unknown`) and makes unrelated packages fail to build 20 minutes later. Both
+> `build.sh` and `make` now stop immediately and print the fix (`sudo apt-get install -y git`)
+> — the whole story is section 5.1.1 of [README.zh-CN.md](README.zh-CN.md).
+
 ## Install
 
 Use [AN758x-Stock2UBI](https://github.com/pbs05/an758x-stock2ubi) to back up the stock flash and install the UBI layout. Boot images and Web recovery are provided by [AN758x U-Boot](https://github.com/pbs05/uboot-an758x).
