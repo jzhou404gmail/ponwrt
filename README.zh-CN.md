@@ -53,6 +53,7 @@
 | 21 | `docs` | AN7583 硬件加密核查（含两个可复现探针 `an7583-aes-check.c` / `an7583-eip93-probe-test.c`）与 XG-040G-MF **2.5G 口排查记录** | 文档 |
 | 22 | `airoha/patches-6.18` | **NPU 固件版本暴露到 sysfs**（`950-npu-expose-fw-version-sysfs.patch`，§3）：用户态不必再去 grep 启动日志拿版本号 | 功能补充 |
 | 23 | `configs/release.config` | 把 `luci-app-airoha-npu` 加进发布配置（§5.4） | 默认值 |
+| 24 | `build` | **裸 `make` 也套 feed 补丁**（`include/toplevel.mk` 的 `feed-patches-apply`，任何目标都先走它）；`apply.sh` 把"git 用不了"与"补丁真冲突"分开报并新增 `--reset`；`build.sh`/`make` 增加 git 与 `REVISION=unknown` 自检；修正 `build_dir` 清理路径（kmod 包在 `linux-<板>_<子目标>/<包>`，原来没清到，`an7583` 里躺着 10-05 的旧源码）（§5.1.1、§5.2.1） | 工具/根因修复 |
 
 ---
 
@@ -916,6 +917,51 @@ bridge -d link show dev ct-iptv-mc | tr ',' '\n' | grep learning   # 期望 lear
 sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
 ```
 
+#### 5.1.1 前置条件：`git` 必须真的在 PATH 里 `[实测]`
+
+这条单列出来，因为 2026-10-17 那天两条编译路子一起翻车，根因就是它，而且**不报错、
+只静默走样**。
+
+本机（deepin）2026-10-14 的一次自动 `apt dist-upgrade` 顺手把系统 `git` 包删了
+（`/var/log/apt/history.log`：`Upgrade: git-man …` + `Remove: git:amd64`）。后来 git 是
+手工解开放在 `~/.local/opt/git/` 下的，靠 `~/.local/bin/git` 这个包装脚本调用：
+
+```sh
+#!/bin/sh
+GIT_EXEC_PATH="$HOME/.local/opt/git/usr/lib/git-core" \
+GIT_TEMPLATE_DIR="$HOME/.local/opt/git/usr/share/git-core/templates" \
+exec "$HOME/.local/opt/git/usr/bin/git" "$@"
+```
+
+`~/.local/bin` 只由 `~/.profile` 加进 PATH，**登录 shell 才有**。所以桌面终端、
+`sudo -s`、cron、某些 CI 风格的非登录 shell 里可能就没有 `git`。缺 git 的后果是静默的：
+
+| 现象 | 实际原因 |
+|---|---|
+| `./build.sh` 报 **"套不上"**，并列出 `airoha-xpon/src/airoha-xpon-leds.c` | `apply.sh` 的三个 `git apply --check` 全失败（因为 `git` 命令本身就没了），被当成"补丁套不上"。补丁其实是好的 —— 照提示去改补丁就白费功夫 |
+| 编了 20 多分钟，某个**毫不相干**的包报 `failed to build`（那天是 `package/base-files`） | `scripts/getver.sh` 拿不到版本 → `REVISION=unknown` → 包版本整棵树换一套（base-files 由 `1943~a57faf93c6` 变成 `1943~unknown`），增量状态错乱 |
+
+自查与修法（一次修好，PATH/HOME 怎么变都不会再踩）：
+
+```sh
+git --version                             # 找不到就是它
+git -C "$PWD" rev-parse --git-dir
+scripts/getver.sh                         # 输出 unknown 就是它
+sudo apt-get install -y git               # ← 一劳永逸：恢复系统 git
+```
+
+现在 `build.sh` 与顶层 `make` 都会先自检：`git` 用不了 / 版本是 `unknown` 就**当场停下**
+并打印上面这几条，而不是等 20 分钟后随机报错（见 `build.sh` 与
+`include/toplevel.mk` 里的自检）。`feed-patches/apply.sh` 也会把"git 用不了"和"补丁真
+冲突"分开报 —— 这两件事的修法完全不同。
+
+**没装系统 git 也能编**：`build.sh`、`feed-patches/apply.sh` 与顶层 `make` 在 PATH 里
+找不到 `git` 时会自己去找 `~/.local/bin/git` 并补进 PATH（`build.sh` 补的那份还会传给
+`make`，所以 `getver.sh` 也能拿到正确版本）。也就是说两种编译方式在这台机器上现在都
+能跑通；`sudo apt-get install -y git` 是为了彻底免疫 —— 别处再冒出个非登录 shell、
+`sudo`、cron 时不会再踩。想根治"桌面终端没有 `~/.local/bin`"，也可以把
+`export PATH="$HOME/.local/bin:$PATH"` 加进 `~/.bashrc`（`~/.profile` 只对登录 shell 生效）。
+
 ### 5.2 取源码与 feed
 
 ```sh
@@ -938,17 +984,28 @@ feed-patches/
     └── 0001-*.patch                          # EPON 上 pon0-online 不再死灯（§2.7.3）
 ```
 
-* `build.sh` 在 **make 之前**自动调用 `feed-patches/apply.sh`：已套过的跳过，没套的套上，
-  套不上（上游改过同一段）会明确报错而不是默默继续。**报错时会直接打印出涉及的源文件
-  和一条可直接粘贴的复方命令**（先 `git -C feeds/<feed> checkout -- <文件>` 复位、
-  再重跑 `./feed-patches/apply.sh`），因为"套不上"的两种成因（文件被手工改过 / 上游改过
-  同一段）处理方式完全不同，只给一句"套不上"没法往下走。
+* **`build.sh` 和顶层的 `make` 都会套**（`make` 那一步挂在 `include/toplevel.mk` 的
+  `feed-patches-apply` 上，是所有目标的必经之路）。原来只有 `build.sh` 和 CI workflow
+  各套一遍，**直接 `make -j$(nproc)` 的人就漏了** —— 编出来的固件静默缺少这些修复
+  （`feeds install` 拿到的是未打补丁的上游源码），而构建日志一切正常。CI 里那一步保留着
+  也无害：脚本是幂等的。
+* 已套过的跳过，没套的套上，套不上会明确报错而不是默默继续。**报错分两种，修法相反**：
+  * `!! git 用不了：…` —— 环境问题（§5.1.1），报错里直接给出 `sudo apt-get install -y git`；
+  * `!! 套不上: …` —— 真冲突。报错里会打印涉及的源文件、**git 自己报的错**（原先被
+    `2>/dev/null` 吞掉了，只看得到"套不上"），以及两条成因对应的修法：
+    文件被手工改过（`./feed-patches/apply.sh --reset`，或先
+    `git -C feeds/<feed> checkout -- <文件>` 再重跑脚本）/ 上游改过同一段（要照现状重做补丁）。
 * 一个 feed 里叠着多个补丁时，后面的补丁会改动前面补丁的上下文行，所以"已套用"的判定
-  用 `git apply --check --reverse`（必要时缩小上下文 `-C1`），不是简单比字符串。
+  用 `git apply --check --reverse`（必要时缩小上下文 `-C1`，或 `--ignore-whitespace`
+  兜住行尾/空白被动过的文件），不是简单比字符串。
 * 刚套上某个补丁时，脚本会同时删掉该包在 `build_dir/` 里的旧拷贝 —— OpenWrt 只在
   prepare 阶段把本地源码**拷贝**进去，源码改了不删旧拷贝，就会出现"改了源码但编译用的
-  还是旧文件"。
-* 手动查看/套用：`./feed-patches/apply.sh --check` / `./feed-patches/apply.sh`。
+  还是旧文件"。**kmod 包的拷贝不在 `build_dir/target-*/<包>`，而在
+  `build_dir/target-*/linux-<板>_<子目标>/<包>`**：两个位置都要删。这条是 2026-10-17
+  查出来的 —— `linux-airoha_an7583/airoha-xpon` 里一直躺着 10-05 的旧源码（补丁前），
+  脚本每次都说"已清理"，编出来的模块却还是旧的。
+* 手动查看/套用/复位：`./feed-patches/apply.sh --check` / `./feed-patches/apply.sh` /
+  `./feed-patches/apply.sh --reset`。
 
 **分支政策：只保留一条主线**。`master` 就是这条线 —— 上游 `pbs05/ponwrt` + 本 fork 的
 全部改动，**编译一律用它**：
@@ -988,15 +1045,16 @@ git fetch origin && git merge origin/master     # 同步上游
 
 | # | 阶段 | 做什么 | 为什么 |
 |---|---|---|---|
+| ⓪ | 环境自检 | `git` 用不了、或 `scripts/getver.sh` 给出 `unknown` → **当场停下**并打印修法（§5.1.1） | 缺 git 不会报错，只会静默走样：补丁判定全失败（误报"套不上"）+ 包版本整棵树换一套（随机包 `failed to build`）。宁可 0 秒失败，也不要 20 分钟后炸在无关的包上 |
 | ① | 套配置 | 只有给 `--config=<档>` 时才动 `.config`：先备份成 `.config.bak-ponwrt-<时间戳>`，再 `cat configs/<档>.config configs/release.config > .config` + `make defconfig` | 让"用种子配置重建"这件事可回退 |
 | ② | 掉包保护 | 对比 `CONFIG_PACKAGE_*=y` 的数量，若从 N 掉到 **< N×0.8** 就**中止并把备份还原** | 一次误操作就能把手调的配置覆盖掉；打印 `包选择数量: before -> after` 让你看见变化 |
-| ③ | 套 feed 补丁 | 跑一遍 `feed-patches/apply.sh`（幂等，§5.2.1） | `feeds/` 不入库，改在上游驱动里的修复靠补丁落地；刚套上的会清掉 `build_dir` 旧拷贝，保证增量编译用的是改过的源码 |
+| ③ | 套 feed 补丁 | 跑一遍 `feed-patches/apply.sh`（幂等，§5.2.1） | `feeds/` 不入库，改在上游驱动里的修复靠补丁落地；刚套上的会清掉 `build_dir` 旧拷贝，保证增量编译用的是改过的源码。**裸 `make` 也会做这一步**（`include/toplevel.mk` 的 `feed-patches-apply`），所以"直接 `make`"不会静默漏掉修复 |
 | ④ | 并发锁 | `tmp/build.lock`：锁在 **6 小时内** → 中止并打印锁里的 pid/时间；**过期锁** → 忽略继续 | 同一棵树并发 `make` 会同时写 `build_dir/` 与 `staging_dir/`，症状是 libunistring/perl 这类毫不相干的包"随机"失败，极难排查 |
 | ⑤ | 编译 | `make -j$JOBS`，**原始输出全部进 `tmp/build.log`** | 控制台留给进度块，细节随时可查 |
 | ⑥ | 进度 | 后台起 `build-watch.sh` 读日志，控制台只打印阶段/里程碑/正在编译什么 | 见 §5.3.4 |
 | ⑦ | 逐包日志 | `BUILD_LOG=1` → 每个包的完整输出落 `logs/<包>/compile.txt`（整棵树约 2.5 MB，已在 `.gitignore`） | `tmp/build.log` 里通常只有一行 `ERROR: <包> failed to build.`，**真正的报错只在这份日志里** |
 | ⑧ | 失败自愈 | 见 §5.3.5 | |
-| ⑨ | 产物体检 | 编译成功后自动跑 `verify-images.sh`；若它返回 **2**（内核树脏这一类）则 `rm -rf build_dir/target-*/<board>_<subtarget>` 后**重编一遍**；其它非 0 直接判失败并提示"不要刷" | "能编译"不等于"能刷"，真实事故见 §5.5 |
+| ⑨ | 产物体检 | 编译成功后自动跑 `verify-images.sh`；若它返回 **2**（内核树脏这一类）则 `rm -rf build_dir/target-*/linux-<board>_<subtarget>` 后**重编一遍**；其它非 0 直接判失败并提示"不要刷" | "能编译"不等于"能刷"，真实事故见 §5.5 |
 | ⑩ | 收尾 | 打印**开始时间 / 结束时间 / 总共耗时**（成功、失败、Ctrl-C 三种都打，`SUMMARY_DONE` 去重），追加进 `tmp/build.log`；再列出**本次新产出的 `.itb`** 与烧录自检提示 | 事后对时间、确认这次到底产出了什么 |
 | ⑪ | 信号处理 | `trap EXIT INT TERM` → 连 **`make` 和 `build-watch.sh` 一起收掉**并删锁 | 否则 Ctrl-C 后 `make` 变孤儿继续跑，而锁已经删了 ⇒ 下次启动就是并发编译 |
 
@@ -1025,8 +1083,15 @@ git fetch origin && git merge origin/master     # 同步上游
 > 🧹 **二、内核构建树被留在 initramfs 配置上**（`verify-images.sh` 返回 2）：
 > 上一次被中途打断的构建会把内核树留在 initramfs 配置上，这次 sysupgrade 镜像里就会塞进
 > **initramfs 内核**（体积翻倍、U-Boot inflate 失败 → 无限重启）。这一类**可以自愈**：
-> `build.sh` 清掉 `build_dir/target-*/<board>_<subtarget>` 后重编一遍，只做一次，避免死循环。
+> `build.sh` 清掉 `build_dir/target-*/linux-<board>_<subtarget>` 后重编一遍，只做一次，避免死循环。
 > 复盘见 §5.5。
+>
+> ⚠️ 这条自愈原先**一次都没跑成**（2026-10-17 实测）：脚本开头是 `set -e`，裸跑
+> `./verify-images.sh` 一旦返回非 0，整个脚本当场结束 —— 自愈代码一行都到不了，只留下
+> `==> 编译结束（未走完正常收尾）` 和 `bin/` 里那份**不能刷**的镜像。现在改成
+> `./verify-images.sh || VRC=$?` 把退出码接住。同一次修复还改了要删的目录名：真实目录是
+> `build_dir/target-*/linux-<board>_<subtarget>`（`KERNEL_BUILD_DIR`，见
+> `include/kernel.mk:46`），原来少了 `linux-` 前缀，`rm` 什么都没删掉，"自愈"是空转。
 
 #### 5.3.6 构建失败时按这个顺序查
 
@@ -1035,6 +1100,8 @@ git fetch origin && git merge origin/master     # 同步上游
 3. `grep -nE 'ERROR:|build failed' tmp/build.log | tail`
 4. `dmesg | grep -i oom` —— 内存击杀（需要 root）
 5. **同一棵树里有没有第二个 `make` 在跑** —— `build.sh` 的锁挡不住手敲的 `make`
+6. **`git` 还在不在、版本是不是 `unknown`** —— `git --version` / `scripts/getver.sh`；
+   这种环境下报的任何"随机失败"都不算数，先按 §5.1.1 修 git 再重来
 
 ### 5.4 产物
 
@@ -1123,7 +1190,7 @@ grep INITRAMFS_SOURCE build_dir/target-*/linux-airoha_an7581/linux-*/.config
 | 同机型 **sysupgrade 内核 ≠ recovery 内核** | 上面那条最直接的指纹 |
 
 **自愈**：如果体检失败的原因属于"内核那一类"（`verify-images.sh` 退出码 **2**），
-`build.sh` 会自动清掉 `build_dir/target-*/<board>_<subtarget>` 并重编一次 ——
+`build.sh` 会自动清掉 `build_dir/target-*/linux-<board>_<subtarget>` 并重编一次 ——
 你不用手动救，但要知道它为什么慢了一轮。
 
 **手工修法**（体检让你自己修时）：
@@ -1369,7 +1436,11 @@ docs/an7583-armv8-crypto-check.md              AN7583 硬件加密核查（硬�
 docs/an7583-aes-check.c                        用户态探针：打印 OPENSSL_armcap_P 与真实吞吐
 docs/an7583-eip93-probe-test.c                 EIP-93 只读寄存器探针模块（证明硬件存在）
 docs/xg-040g-mf-an7583-2p5g-fix.md             XG-040G-MF 2.5G 口三个症状的完整排查记录
-feed-patches/apply.sh                         上游 feed 补丁（幂等）套用脚本，build.sh 自动调
+feed-patches/apply.sh                         上游 feed 补丁（幂等）套用脚本：--check 只看状态、
+                                              --reset 复位后重套；区分「git 用不了」与
+                                              「补丁真冲突」两种报错。build.sh 与顶层 make 都调
+include/toplevel.mk                           挂 feed-patches-apply（任何 make 目标都先套补丁）
+                                              + git/REVISION 自检（§5.1.1）
 feed-patches/pon_drivers/airoha-xpon/
     0001-*.patch                               EPON 上 pon0-online 触发器不再死灯
 target/linux/airoha/base-files/usr/libexec/
