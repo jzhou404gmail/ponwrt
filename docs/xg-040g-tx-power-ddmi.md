@@ -182,6 +182,27 @@ make[1]: *** [package/Makefile:164: package/install] Error 99
 apk v3 在“非 root + 不能改属主”下按错误处理，与本次改动无关。出完整镜像请在
 常规的 root/容器环境里跑；单验证驱动可以只编 kmod 再手工替换：
 
+（同一类环境限制还会让 per-device rootfs 的 `target-dir-<hash>` 也报
+`failed to preserve ...: owner`，都属同一件 chown 的事。）
+
+### 另一个坑：内核构建树被留成 initramfs 配置（和本次改动无关）
+
+非“separate ramdisk”模式下，生成 recovery 镜像那一步会**就地**把
+`build_dir/.../linux-<board>/linux-*/​.config` 改成
+`CONFIG_INITRAMFS_SOURCE="<rootfs> ..."`，构建结束也不还原。下一次构建的
+“普通内核”于是拿这份配置重链，`Image` 变成 194 MB 的 initramfs 内核 →
+sysupgrade 镜像从 58 MB 涨到 117 MB，刷进去 U-Boot `inflate() returned -5`。
+指纹：`Image` 里能 `strings` 出 `etc/openwrt_release`、sysupgrade 与 recovery
+两侧内核 md5 相同。`verify-images.sh` 会拦下，`build.sh` 现在在**开编前**把它们
+复位（`kernel_tree_heal()`：`.config ← .config.set`），手工恢复也可以：
+
+```
+rm -rf build_dir/target-*/linux-<board>_<subtarget>   # 最省事，重编内核
+# 或只复位配置，让内核增量重链：
+cp build_dir/target-*/linux-*/linux-6.18.52/.config.set \
+   build_dir/target-*/linux-*/linux-6.18.52/.config
+```
+
 ```
 make package/feeds/pon_drivers/airoha-pon-frontends/compile
 scp build_dir/target-aarch64_cortex-a53_musl/linux-airoha_an7581/airoha-pon-frontends/airoha-en7572.ko \
