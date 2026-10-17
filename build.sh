@@ -257,6 +257,48 @@ echo
 WATCH_PID=$!
 # 注意：这里不要再设 trap —— 上面的 cleanup 已经负责杀 WATCH_PID 并删锁
 
+# ---------- 开编前：把内核构建树上一次留下的 initramfs 配置复位 ----------
+# 非「separate ramdisk」模式下，生成 recovery 镜像那一步会**就地**把内核构建树的
+# .config 改成 CONFIG_INITRAMFS_SOURCE="<rootfs> ..."，而且构建结束也不还原。
+# 于是下一次构建的"普通内核"用的就是这份配置：arch/arm64/boot/Image 变成 194 MB 的
+# initramfs 内核，被拷成 $(KERNEL_BUILD_DIR)/Image，sysupgrade 里于是塞进假内核
+# （体积翻倍 + U-Boot inflate 失败 → 无限重启）。verify-images.sh 能拦下它，但代价
+# 是白编一遍内核。这里改成**开编前**先复位：.config ← .config.set（Kernel/Configure
+# 自己生成的那份干净配置，INITRAMFS_SOURCE=""），内核只需增量重链，镜像就是对的。
+#
+# 只动主版本目录（如 linux-6.18.52），跳过每机型副本（linux-6.18.52.<hash>）：
+# 那些副本每次由 Kernel/PrepareConfigPerRootfs 从主树重建，修好主树就够了。
+kernel_tree_heal() {
+	local kcfg kdir name set_cfg healed=0
+	for kcfg in build_dir/target-*/linux-*/linux-*/.config; do
+		[ -f "$kcfg" ] || continue
+		kdir=${kcfg%/.config}
+		name=${kdir##*/}                       # linux-6.18.52 / linux-6.18.52.2284f8a8
+		case "$name" in *.*.*.*) continue ;; esac
+		# "空串"是正常配置（CONFIG_INITRAMFS_SOURCE=""），只有非空的才说明被改过
+		grep -q '^CONFIG_INITRAMFS_SOURCE="[^"]' "$kcfg" || continue
+
+		set_cfg="${kdir}/.config.set"
+		if [ ! -s "$set_cfg" ]; then
+			echo "!! ${kdir}/.config 里留着 initramfs 配置，但没有 .config.set 可复位" >&2
+			echo "!! 只能整棵删掉重编：rm -rf ${kdir}" >&2
+			continue
+		fi
+		if grep -q '^CONFIG_INITRAMFS_SOURCE="[^"]' "$set_cfg"; then
+			echo "!! ${kdir}/.config.set 本身也带 initramfs 配置，跳过（请整棵删掉重编）" >&2
+			continue
+		fi
+
+		echo "==> 内核构建树被上一次构建留成 initramfs 配置：${name}"
+		echo "    复位 .config ← .config.set（普通内核会重新链接，镜像体积恢复正常）"
+		cp "$set_cfg" "$kcfg"
+		healed=1
+	done
+	[ "$healed" -eq 0 ] || echo
+}
+
+kernel_tree_heal
+
 # ---------- 失败自愈 ----------
 # 已知的一种时序性失败：某个包的子 make 被"静默打断"—— 现象是 tmp/build.log 里
 # 只有一行 "ERROR: <包> failed to build."，而它自己的 logs/<包>/compile.txt
