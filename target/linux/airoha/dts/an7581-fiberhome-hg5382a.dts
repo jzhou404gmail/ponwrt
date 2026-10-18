@@ -75,6 +75,21 @@
 			gpios = <&en7581_pinctrl 16 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "pon0-los";
 		};
+
+		/*
+		 * Internet / broadband (4th panel LED) on GPIO5, active low.
+		 * userspace pon-internet-led takes this class device over via the
+		 * "*:wan-online" glob; the kernel trigger is only the fallback
+		 * when that service is stopped. Keeping the node here matters:
+		 * without it there is no class device at all and the 4th LED
+		 * stays dark even though /etc/init.d/pon-internet-led is running.
+		 */
+		led-internet {
+			color = <LED_COLOR_ID_BLUE>;
+			function = LED_FUNCTION_WAN_ONLINE;
+			gpios = <&en7581_pinctrl 5 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "pon0-online";
+		};
 	};
 };
 
@@ -99,7 +114,12 @@
 
 	pnand_pins: pnand-pins {
 		mux {
-			/* Parallel NAND uses GPIO4-7 and GPIO30-42. */
+			/*
+			 * Parallel NAND claims pins 4-7 (spi_cs0/clk/mosi/miso,
+			 * no GPIO number) and pins 30-42. With the gpio-ranges
+			 * offset of 13, pins 30-42 are GPIO17-29 - not GPIO4-7
+			 * and GPIO30-42. GPIO5 stays free for the 4th panel LED.
+			 */
 			function = "pnand";
 			groups = "pnand";
 		};

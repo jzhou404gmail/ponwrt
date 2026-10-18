@@ -18,7 +18,7 @@
 #   sh /tmp/pon-led-diag.sh              # 只打印状态，不动任何灯
 #   sh /tmp/pon-led-diag.sh walk         # 逐个点亮每个灯，默认每个 3 秒（盯着面板看）
 #   sh /tmp/pon-led-diag.sh walk 5       # 每个灯亮 5 秒
-#   sh /tmp/pon-led-diag.sh probe 1 9    # 直接拉某个 GPIO（可选，见 probe() 里的警告）
+#   sh /tmp/pon-led-diag.sh probe 5      # 直接拉某个本地 GPIO（DTS 里的编号，见 probe() 的警告）
 #
 # walk 结束后会把每个灯的 trigger 恢复原样（脚本自己记着），不用重启。
 
@@ -100,21 +100,41 @@ show_status() {
 
 # 直接驱动一个 GPIO（可选，用于"这个脚上是不是还挂着一颗灯珠"的排查）
 #
-# 只在已经确认过 /sys/kernel/debug/gpio 的前提下用：参数是 **gpiochip 全局编号**
-# （不是板子丝印上的脚号）。脚本会拒绝已经被占用的脚和已知危险脚。
+# 参数是 **SoC 本地 GPIO 号**（就是 DTS 里 `&en7581_pinctrl N` 的 N，也是
+# /sys/kernel/debug/gpio 里的 gpio-N）。sysfs 的 export 要的是 gpiochip 全局编号，
+# 脚本会自己从 pinctrl gpiochip 的 base 换算，不用手算。
+# 脚本会拒绝已经被占用的脚和已知危险脚。
 probe() {
 	[ $# -gt 0 ] || {
-		echo "用法: $0 probe <全局GPIO号> [<号> ...]   （先看 status 里的 gpiochip 段）" >&2
+		echo "用法: $0 probe <本地GPIO号> [<号> ...]   （先看 status 里的 gpiochip 段）" >&2
 		exit 1
 	}
 
-	say "GPIO 点灯排查（每个脚 先拉低 2s、再拉高 2s；结束后 unexport）"
+	base=""
+	for c in /sys/class/gpio/gpiochip*; do
+		case "$(cat "$c/label" 2>/dev/null)" in
+		*pinctrl*)
+			base=$(cat "$c/base" 2>/dev/null)
+			break
+			;;
+		esac
+	done
+	case "$base" in
+	''|*[!0-9]*)
+		echo "找不到 pinctrl gpiochip 的 base，无法换算全局编号" >&2
+		exit 1
+		;;
+	esac
+
+	say "GPIO 点灯排查（本地号；每个脚 先拉低 2s、再拉高 2s；结束后 unexport）"
+	echo "gpiochip base=$base，例如本地 GPIO5 → 全局 $((base + 5))"
 	echo "!! 只对 /sys/kernel/debug/gpio 里没有 consumer 的脚用；点之前想清楚这个脚可能接什么"
 	for n in "$@"; do
 		case "$n" in
-		# 已知危险/占用的脚：并行 NAND(GPIO17-29)、PON TX_DISABLE(38)、复位键(35)、
-		# 面板 LED(13/14/15/16/43-46)、USB 供电相关
-		17|18|19|20|21|22|23|24|25|26|27|28|29|35|38|43|44|45|46)
+		# 已知危险/占用的脚（本地号）：电源/PON/光信号灯(13/14/16)、
+		# 并行 NAND(GPIO17-29)、PHY 复位(34)、复位键(35)、TX_DISABLE(38)、
+		# 面板 LAN 灯/保留脚(43-46)
+		13|14|16|17|18|19|20|21|22|23|24|25|26|27|28|29|34|35|38|43|44|45|46)
 			echo "跳过 $n：这是已知被占用的脚（NAND/TX_DISABLE/按键/面板灯）"
 			continue ;;
 		esac
@@ -124,18 +144,20 @@ probe() {
 			continue
 		fi
 
-		echo ">>> gpio-$n: 拉低（若该脚挂着低有效的灯，这时会亮）"
-		echo "$n" >/sys/class/gpio/export 2>/dev/null || {
+		g=$((base + n))
+		echo ">>> gpio-$n（全局 $g）: 拉低（若该脚挂着低有效的灯，这时会亮）"
+		echo "$g" >/sys/class/gpio/export 2>/dev/null || {
 			echo "    export 失败（脚不存在或已被占用）"
 			continue
 		}
-		echo out >"/sys/class/gpio/gpio$n/direction" 2>/dev/null || true
-		echo 0 >"/sys/class/gpio/gpio$n/value" 2>/dev/null || true
+		echo out >"/sys/class/gpio/gpio$g/direction" 2>/dev/null || true
+		echo 0 >"/sys/class/gpio/gpio$g/value" 2>/dev/null || true
 		sleep 2
-		echo ">>> gpio-$n: 拉高"
-		echo 1 >"/sys/class/gpio/gpio$n/value" 2>/dev/null || true
+		echo ">>> gpio-$n（全局 $g）: 拉高"
+		echo 1 >"/sys/class/gpio/gpio$g/value" 2>/dev/null || true
 		sleep 2
-		echo "$n" >/sys/class/gpio/unexport 2>/dev/null || true
+		echo in >"/sys/class/gpio/gpio$g/direction" 2>/dev/null || true
+		echo "$g" >/sys/class/gpio/unexport 2>/dev/null || true
 	done
 	echo ">>> 排查结束"
 }

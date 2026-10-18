@@ -45,7 +45,7 @@
 | 13 | `feed-patches` | **上游 feed 补丁机制**：`feeds/` 不入库，改在上游驱动里的修复以补丁形式存 `feed-patches/`，`build.sh` 编译前幂等套用（§5.2.1） | 工具 |
 | 14 | `pon_drivers`（feed 补丁） | **EPON 上 `pon0-online` 永远不亮**（EPON 侧 `service_ready` 无人置 1）→ 改用"LLID 注册完成"作为 service ready | 硬件修复 |
 | 15 | `airoha`（DTS） | 「光信号」灯的语义：**保持传统语义**（正常灭、无光红闪）。曾试过"有光常亮"，实机觉得别扭后已退回（§2.7.2） | 决策记录 |
-| 16 | `airoha/base-files` | **「上网」灯 = 真实上网状态**：`pon-internet-led` 周期探测 well-known 站点，通就常亮、连续失败即灭；`/etc/init.d` + iface hotplug 拉起（§2.7.3） | 功能修复 |
+| 16 | `airoha/base-files` | **「上网」灯 = 真实上网状态**：`pon-internet-led` 周期探测 well-known 站点，通就常亮、连续失败即灭；`/etc/init.d` + iface hotplug 拉起（§2.7.3）；**HG5382A 补上漏掉的 `wan-online` 节点（GPIO5）**，否则这台机器上服务在跑但一个灯都匹配不到（§2.7.4） | 功能修复 |
 | 17 | `docs` | `pon-led-diag.sh`：面板灯取证脚本（触发器/亮度/线路状态/service_ready/OAM 认证 + 逐个点亮对面板） | 文档 |
 | 18 | `verify-images.sh` | **产物体检闸**（+ `build.sh` 自动调用与内核自愈）：抓"体积翻倍 / 普通内核被 initramfs 内核顶替 / 截断"这类**能编译但不能刷**的产物（§5.5，真实事故复盘） | 工具 |
 | 19 | `airoha/an7583` | **内核态 AES 之前一个都没开**：开启 ARMv8 CE（AES 全模式 + GHASH/PMULL）、`CRYPTO_CBC`、`CRYPTO_AUTHENC`、AF_ALG，并编上 EIP-93（§2.8） | 硬件修复 |
@@ -618,7 +618,57 @@ EOF
 **驱动侧那处 EPON 修复仍然保留**（`0001-*.patch`）：`pon0-online` 在 EPON 上不再是死灯，
 没装/关掉上面这个用户态服务时，这盏灯仍然反映"PON 侧就绪"。
 
-#### 2.7.4 上机自检
+#### 2.7.4 HG5382A 的第 4 个灯：设备树整台漏了 `wan-online` 节点 `[实测]`
+
+**现象**：`192.168.32.254` 的 HG5382A（`fiberhome,hg5382a`）升级到带 `pon-internet-led`
+的镜像后，面板第 4 个「宽带」灯始终不亮；同一镜像在 Nokia XG-040G-MD、HG5585F-CT/CU
+上正常。
+
+**取证**：
+
+```sh
+# 只有 3 个面板灯类设备，没有 *:wan-online
+ls /sys/class/leds/
+blue:power  blue:wan  red:wan
+
+# 服务本身在跑、配置也 enabled，但一个灯都匹配不到
+/etc/init.d/pon-internet-led running       # 0
+/usr/libexec/pon-internet-led status
+#   enabled : 1
+#   last state : on http://connect.rom.miui.com/generate_204
+#   leds :
+```
+
+**根因**：`an7581-fiberhome-hg5382a.dts` 只描述了电源（GPIO13）、PON（GPIO14）、
+光信号（GPIO16）三个灯，**没有第 4 个灯的节点**。`pon-internet-led` 的匹配 glob 是
+`*:wan-online`，没有类设备就一个也点不亮 —— 脚本的探测逻辑本身没问题。
+`board.d/01_leds` 也不负责这盏灯（它只绑 netdev/usbport），所以 UCI 里补不出这个类设备。
+
+**为什么 5382A 能空出 GPIO5**：这块板用 8-bit TSOP48 并行 NAND，pinctrl 的 `pnand`
+组是 **pin 4-7（spi_cs0/clk/mosi/miso，没有 GPIO 编号）+ pin 30-42（= GPIO17-29）**；
+GPIO4-7（对应 pin 17-20）并不在 `pnand` 组里，GPIO5 一直是空的。旧注释写成
+"GPIO4-7 和 GPIO30-42"，容易让人以为 GPIO5 被 NAND 占了，实际上不是（这次一并改了注释）。
+
+**修复**：在 DTS 的 `leds` 节点补第 4 盏：
+
+```dts
+led-internet {
+	color = <LED_COLOR_ID_BLUE>;
+	function = LED_FUNCTION_WAN_ONLINE;
+	gpios = <&en7581_pinctrl 5 GPIO_ACTIVE_LOW>;
+	linux,default-trigger = "pon0-online";
+};
+```
+
+`pon-internet-led` 的 `*:wan-online` 会自动接管（trigger 置 `none`，写 brightness）；
+`stop` 时把灯还给内核的 `pon0-online`。**不需要改 UCI/board.d**。
+
+**实机验证（2026-10-18）**：在现场 5382A 上从 sysfs export GPIO5 并拉低 15 秒，
+第 4 个「宽带」灯点亮；1 秒亮/1 秒灭闪 30 秒同步闪烁 —— 确认 GPIO5 就是这盏灯。
+改 DTS 后刷机，`/usr/libexec/pon-internet-led status` 的 `leds:` 应出现
+`/sys/class/leds/blue:wan-online`，能上网时常亮。
+
+#### 2.7.5 上机自检
 
 ```sh
 sh docs/pon-led-diag.sh                # 取证：LED/触发器/亮度、线路状态、service_ready、OAM 认证、代理
@@ -626,6 +676,7 @@ sh docs/pon-led-diag.sh walk 4         # 逐个点亮，确认"哪个 sysfs 灯 
 
 cat /sys/class/leds/red:wan/trigger           # 期望 [pon0-los]（传统语义）
 cat /sys/class/leds/blue:wan/trigger          # 期望 [pon0-registration]
+ls /sys/class/leds/*:wan-online               # 期望恰好 1 个（5382A 以前是 0 个，见 §2.7.4）
 cat /sys/class/leds/blue:wan-online/trigger   # 期望 [none]（被用户态接管）
 
 pon-internet-led status                # 配置 + 上次探测结果（/var/run/pon-internet-led.state）
@@ -638,7 +689,7 @@ logread | grep pon-internet-led        # 每次 online/offline 切换都有日�
 ifdown wan → 第 4 个灯立刻灭；ifup wan → 3 秒后补探，通则重新点亮
 ```
 
-#### 2.7.5 证据
+#### 2.7.6 证据
 
 ```sh
 # 原厂固件里的 LED 表（本机 CU rootfs 里 dump 出来的）
