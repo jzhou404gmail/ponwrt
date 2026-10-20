@@ -846,8 +846,18 @@ function renderGdmCard(g, topo) {
 function renderCdmCard(c) {
 	c = c || {};
 	var cpu = Number(c.rx_cpu) || 0, hwf = Number(c.rx_hwf) || 0;
-	var total = cpu + hwf;
-	var pct = total > 0 ? hwf / total * 100 : 0;
+	/*
+	 * 两个 CDM 用的不是同一组硬件计数器（见厂商 fe_reg_en7512.h）：
+	 *   LAN 侧的 DMA 走 RXHWF_FAST_ALL / RXHWF_FAST_DROP —— 快路径放行的包与其中丢弃的包；
+	 *   PON 侧的 DMA 走 RXHWF_OK —— 经硬件路径交给 CPU 的包。
+	 * 只取其中一组，另一侧就会永远是 0%。这里按通道有哪组就用哪组算"硬件路径占比"。
+	 */
+	var fastAll = Number(c.rx_fast) || 0;
+	var fast = Math.max(0, fastAll - (Number(c.rx_fast_drop) || 0));
+	var hasFast = fastAll > 0;
+	var total = hasFast ? fast + cpu : cpu + hwf;
+	var passed = hasFast ? fast : hwf;
+	var pct = total > 0 ? passed / total * 100 : 0;
 	var body = [
 		aui.bar({
 			pct: pct,
@@ -856,7 +866,7 @@ function renderCdmCard(c) {
 			right: total > 0 ? aui.fmtPct(pct, 1) : '—'
 		}),
 		aui.row(_('CPU path'), aui.fmtK(cpu)),
-		aui.row(_('HW forwarded'), aui.fmtK(hwf)),
+		aui.row(hasFast ? _('Fast path') : _('HW forwarded'), aui.fmtK(passed)),
 		// Register +0x00 of this CDM, presented as a total in its own right.
 		// It is NOT the sum of the CPU/HW delivery split above - on both test
 		// boards it runs on a separate frame stream and can sit far below
