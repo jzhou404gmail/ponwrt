@@ -798,3 +798,6 @@ msgstr "总接收"
 
 msgid "peak"
 msgstr "峰值"
+
+msgid "Fast path"
+msgstr "快路径"
