@@ -100,3 +100,56 @@ git checkout master -- configs/release.config
 2. `configs/an7581.config` 仍只有 206 个包（真实 457），`--config=an7581`
    会编出瘦身固件，被 `build.sh` 的掉包保护拦下。
 3. 独立构建树 `../ponwrt-onu` 已完成工具链与 120 个包，本轮改走原树后未再用它。
+
+## 十、HG5585F-CU 实机升级记录（2026-10-20）
+
+从 `r41558+49-a57faf93c6`（旧 PON 界面）原地升级到 `r0+41615-67dd607e38`
+（本分支），保留配置，结果逐项核对如下。
+
+### 结论：光路与 IPTV 均无回归
+
+| 项 | 结果 |
+|---|---|
+| 板型 | `fiberhome,hg5585f-cu`（镜像 `supported_devices` 与之一致）|
+| 光路 | `active_mode=epon-10g-1g`、`lifecycle=operational`、`pcs_sync=1`、`rx_active=1` |
+| PON 序列号 | UCI 未设 → 走板级身份（新 `pon.init` 的 board identity 回退逻辑）|
+| PPPoE | 重新拨号成功，拿到公网地址 |
+| IPTV 桥 | `br-iptv` UP，`172.16.200.1/24`（与升级前一致）|
+| VLAN | `ct-iptv-svc`(3964) 与 `ct-iptv-mc`(4000) 都在桥里 |
+| nft 过滤 | `table bridge iptv` 已由 fw4 include 加载 |
+| 组播代理 | omcproxy 运行，命令行 `omcproxy br-iptv,br-lan,scope=global` |
+| 单播中继 | udpxy 监听 4022，`/status` 返回 200，source=172.16.200.1 |
+| STB 修复 | `ct-iptv-mc` 的 `learning off` 生效，`iptv-stb` 服务 running |
+| 界面 | 仅 `luci-app-onu.json`；`/www/.../view/onu/` 七页 + onu.css |
+
+### 一个必须记住的细节：段名没有改
+
+新脚本的 `br_iptv` / `br_iptv_mc` 是 **trunk 模式**用的接口名；**bridge 模式
+沿用旧名字**：
+
+```
+network.luci_iptv_bridge      网桥设备 br-iptv，ports = lan2 + ct-iptv-svc + ct-iptv-mc
+network.luci_iptv             接口（static，172.16.200.1/24）
+network.luci_iptv_service_vlan   8021q pon0 vid 3964 name ct-iptv-svc
+network.luci_iptv_multicast_vlan 8021q pon0 vid 4000 name ct-iptv-mc
+firewall.luci_iptv            nftables include → /etc/iptv.nft
+```
+
+`remove_managed_network()` 会先把 `luci_iptv*` 删掉再用同样的名字重建，所以
+升级前后网段名、接口名、omcproxy 的 uplink 都不用改。**omcproxy 的 uplink
+必须保持 `luci_iptv`**；写成 `br_iptv` 会让 omcproxy 起不来（"active with no
+instances"）—— 本次升级第一版就是踩了这个坑，已修正。
+
+### 升级时做过的一次性迁移
+
+只做两件事，写在 `/etc/uci-defaults/99-onu-migrate` 里（带界面存在性守卫，
+旧固件上不会误执行），并登记到 `/etc/sysupgrade.conf` 以便跨升级保留：
+
+1. 删掉旧防火墙段 `firewall.iptv` / `firewall.iptv2lan` / `firewall.luci_iptv`。
+   旧区域引用的 `network.luci_iptv` 会被新脚本重建，但区域本身要删 —— 否则
+   新脚本再建一个同样叫 `iptv` 的区域，两个同名 zone 会让 fw4 拒绝加载，
+   连带丢掉 NAT。
+2. 修正 omcproxy uplink（本次写错，正确值是 `luci_iptv`）。
+
+sysupgrade 保留 `/etc/config`，所以升级后 `/etc/config/iptv` 成为孤儿文件，
+可以删；新的 IPTV 配置来自 `/etc/config/onu-iptv`。
