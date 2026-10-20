@@ -145,8 +145,8 @@ msgstr "信道利用率平均周期"
 msgid "Cleared; back to deriving from the SSID (%s)."
 msgstr "已清空，恢复按 SSID 自动派生（%s）。"
 
-msgid "Click \"Scan LAN for devices\" to find XR1710G units on the same LAN."
-msgstr "点击“扫描局域网设备”查找同一局域网内的 XR1710G。"
+msgid "Click \"Scan LAN for devices\" to find mesh-capable devices on the same LAN."
+msgstr "点击“扫描局域网设备”查找同一局域网内支持 Mesh 的设备。"
 
 msgid "Click to disable %s"
 msgstr "点击关闭 %s"
@@ -346,8 +346,8 @@ msgstr "型号"
 msgid "Network"
 msgstr "网络"
 
-msgid "Networking between two XR1710G units: wireless uses native 802.11s; wired uses discovery on the same LAN plus /etc/config/wireless sync."
-msgstr "两台 XR1710G 之间的组网：无线用原生 802.11s；有线则在同一局域网内互相发现，并同步 /etc/config/wireless。"
+msgid "Networking between multiple OpenWrt mesh-capable devices: wireless uses native 802.11s; wired uses discovery on the same LAN plus /etc/config/wireless sync."
+msgstr "多台支持 OpenWrt Mesh 的设备之间组网：无线用原生 802.11s；有线则在同一局域网内互相发现，并同步 /etc/config/wireless。"
 
 msgid "Never synced"
 msgstr "尚未同步过"

@@ -620,7 +620,7 @@ function renderSync() {
 	scanBtn.disabled = !s.enabled;
 
 	var peers = (peerData && peerData.peers) || [];
-	var table = E('div', { 'class': 'nm-empty' }, _('Click "Scan LAN for devices" to find XR1710G units on the same LAN.'));
+	var table = E('div', { 'class': 'nm-empty' }, _('Click "Scan LAN for devices" to find mesh-capable devices on the same LAN.'));
 	if (peers.length) {
 		table = E('div', {}, [
 			E('table', { 'class': 'nm-table' }, [
@@ -1069,7 +1069,7 @@ return view.extend({
 
 		var root = E('div', { 'class': 'meshconf-page' }, [
 			E('h2', {}, _('Mesh networking')),
-			E('p', { 'class': 'nm-lede' }, _('Networking between two XR1710G units: wireless uses native 802.11s; wired uses discovery on the same LAN plus /etc/config/wireless sync.')),
+			E('p', { 'class': 'nm-lede' }, _('Networking between multiple OpenWrt mesh-capable devices: wireless uses native 802.11s; wired uses discovery on the same LAN plus /etc/config/wireless sync.')),
 			E('div', { 'class': 'nm-actions', 'style': 'margin-top:0;border-top:0;padding-top:0' }, [ refreshBtn, updatedEl ]),
 			pageBody
 		]);
