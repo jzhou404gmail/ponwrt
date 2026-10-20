@@ -98,6 +98,26 @@ h3c,hm2004-du)
 	json_close_object
 	json_close_object
 	;;
+fiberhome,hg5382a|fiberhome,hg5585f-ct|fiberhome,hg5585f-cu)
+	# 偏移与编码取自 an7581-fiberhome-ubi-parts.dtsi 的 &ubi_factory fixed-layout，
+	# 也就是内核给这些 netdev 读 MAC / 给 airoha-xpon 读 ONU SN 的同一份数据：
+	#   0x2000  6 字节 MAC（mac-base，GDM1/GDM2 的 netdev 就是从这里取的）
+	#   0x2010  8 字节 ONU SN（4 字节厂商标识 + 4 字节序列，即 GPON 的 8 字节形式）
+	#   0x2020 32 字节产品序列号（定长、NUL 结尾的 ASCII）
+	# 只声明真实存在的三块；不猜其它字段。
+	identity_available=1
+	json_add_object identity
+	json_add_object targets
+	json_add_object factory
+	json_add_object fields
+	identity_field pon_mac mac 8192 6 mac-binary6
+	identity_field pon_sn pon-sn 8208 8 pon-binary8
+	identity_field device_sn serial 8224 32 serial-text
+	json_close_object
+	json_close_object
+	json_close_object
+	json_close_object
+	;;
 esac
 
 board_config_flush
