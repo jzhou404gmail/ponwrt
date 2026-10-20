@@ -1,0 +1,82 @@
+--- a/drivers/char/hw_random/airoha-trng.c
++++ b/drivers/char/hw_random/airoha-trng.c
+@@ -43,6 +43,16 @@
+ #define BUSY_LOOP_SLEEP			10
+ #define BUSY_LOOP_TIMEOUT		(BUSY_LOOP_SLEEP * 10000)
+ 
++/*
++ * The startup health test is an analog measurement and the first one issued
++ * right after the block leaves reset is not reliable: on AN7581 it reports AP
++ * failure on the first run and passes on every later one (measured
++ * 0x00060081 -> 0x00040081, TEST_DONE set in both). Retry it a few times,
++ * resetting the block in between, before concluding the hardware is bad.
++ */
++#define TRNG_HEALTH_RETRIES	5
++#define TRNG_HEALTH_RETRY_MS	20
++
+ struct airoha_trng {
+ 	void __iomem *base;
+ 	struct hwrng rng;
+@@ -76,29 +86,47 @@
+ static int airoha_trng_init(struct hwrng *rng)
+ {
+ 	struct airoha_trng *trng = container_of(rng, struct airoha_trng, rng);
+-	int ret;
++	int ret, attempt;
+ 	u32 val;
+ 
+ 	val = readl(trng->base + TRNG_NS_SEK_AND_DAT_EN);
+ 	val |= RNG_EN;
+ 	writel(val, trng->base + TRNG_NS_SEK_AND_DAT_EN);
+ 
+-	/* Set out of SW Reset */
+-	airoha_trng_irq_unmask(trng);
+-	writel(0, trng->base + TRNG_HEALTH_TEST_SW_RST);
+-
+-	ret = wait_for_completion_timeout(&trng->rng_op_done, BUSY_LOOP_TIMEOUT);
+-	if (ret <= 0) {
+-		dev_err(trng->dev, "Timeout waiting for Health Check\n");
+-		airoha_trng_irq_mask(trng);
+-		return -ENODEV;
++	for (attempt = 0; attempt < TRNG_HEALTH_RETRIES; attempt++) {
++		reinit_completion(&trng->rng_op_done);
++
++		/* Set out of SW Reset */
++		airoha_trng_irq_unmask(trng);
++		writel(0, trng->base + TRNG_HEALTH_TEST_SW_RST);
++
++		ret = wait_for_completion_timeout(&trng->rng_op_done,
++						  BUSY_LOOP_TIMEOUT);
++		if (ret <= 0) {
++			dev_err(trng->dev, "Timeout waiting for Health Check\n");
++			airoha_trng_irq_mask(trng);
++			return -ENODEV;
++		}
++
++		/* Check if Health Test Failed */
++		val = readl(trng->base + TRNG_HEALTH_TEST_STATUS);
++		if (!(val & (RST_STARTUP_AP_TEST_FAIL |
++			     RST_STARTUP_RC_TEST_FAIL)))
++			break;
++
++		dev_warn(trng->dev,
++			 "Health Check fail: %s test fail (attempt %d/%d), retrying\n",
++			 val & RST_STARTUP_AP_TEST_FAIL ? "AP" : "RC",
++			 attempt + 1, TRNG_HEALTH_RETRIES);
++
++		/* Assert the block reset again and let the analog side settle. */
++		writel(SW_RST, trng->base + TRNG_HEALTH_TEST_SW_RST);
++		msleep(TRNG_HEALTH_RETRY_MS);
+ 	}
+ 
+-	/* Check if Health Test Failed */
+-	val = readl(trng->base + TRNG_HEALTH_TEST_STATUS);
+-	if (val & (RST_STARTUP_AP_TEST_FAIL | RST_STARTUP_RC_TEST_FAIL)) {
+-		dev_err(trng->dev, "Health Check fail: %s test fail\n",
+-			val & RST_STARTUP_AP_TEST_FAIL ? "AP" : "RC");
++	if (attempt == TRNG_HEALTH_RETRIES) {
++		dev_err(trng->dev, "Health Check failed %d times, giving up\n",
++			TRNG_HEALTH_RETRIES);
+ 		return -ENODEV;
+ 	}
+ 
