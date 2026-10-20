@@ -208,10 +208,18 @@ define Device/fiberhome_hg5585f-common
   # kmod-usb-ledtrig-usbport is not optional: the CU binds its two panel USB
   # LEDs and the CT its one (board.d/01_leds, trigger "usbport"), and without
   # the module that trigger never appears, so those jacks stay dark.
+  #
+  # wpad-mesh-openssl 而不是 wpad-openssl：mesh 变体在 hostapd 里按
+  # CONFIG_VARIANT=full 编译（见 package/network/services/hostapd/Makefile
+  # 的 LOCAL_VARIANT=mesh 分支），802.11ax/ac 与 k/v/r 一个不少，换过去只是
+  # 多出 802.11s 支持。只有带无线的机型换；h3c_hm2004-du 与 MT7996/7992
+  # 的开发板仍用 wpad-openssl，两边不共存于同一个 rootfs。
+  # luci-app-mesh-conf 是它的界面（802.11s + 有线回程 + DAWN 引导），
+  # 同样只跟这几个无线机型走。
   DEVICE_PACKAGES := kmod-gpio-button-hotplug kmod-leds-gpio kmod-usb3 \
     kmod-usb-ledtrig-usbport \
     kmod-airoha-paged-bosa kmod-airoha-xpon airoha-ponctl airoha-pond \
-	 kmod-mt7915e kmod-mt7916-firmware wpad-openssl \
+	 kmod-mt7915e kmod-mt7916-firmware wpad-mesh-openssl luci-app-mesh-conf luci-i18n-mesh-conf-zh-cn \
 	 fitblk nand-utils ubi-utils $(AIROHA_USB_STORAGE_PACKAGES)
 endef
 
@@ -294,7 +302,7 @@ define Device/znxt_zn515xg-d
     kmod-usb3 kmod-usb-ledtrig-usbport kmod-phy-airoha-en8811h \
     kmod-airoha-en7572 kmod-airoha-xpon airoha-ponctl airoha-pond \
     kmod-mt7915e kmod-mt7916-firmware znxt-zn515-mt7916-eeprom \
-    wpad-openssl \
+    wpad-mesh-openssl luci-app-mesh-conf luci-i18n-mesh-conf-zh-cn \
     nand-utils ubi-utils $(AIROHA_USB_STORAGE_PACKAGES)
   DEVICE_PACKAGES += fitblk
 endef
