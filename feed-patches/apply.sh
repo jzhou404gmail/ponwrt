@@ -82,7 +82,11 @@ for patch in $patches; do
 	rel=${patch#feed-patches/}
 	feed=${rel%%/*}
 	rest=${rel#*/}
-	pkgdir=${rest%%/*}
+	# 包目录允许嵌套：feeds/packages 里不少包在 devel/gn、net/xxx 这种两层目录下，
+	# 补丁按同样层级摆放（feed-patches/packages/devel/gn/0001-*.patch）才对得上
+	# `git -C feeds/<feed> apply` 里的 a/devel/gn/... 路径。取到文件名之前为止，
+	# 一层目录（如 airoha-xpon）得到的结果与旧的 ${rest%%/*} 完全相同。
+	pkgdir=${rest%/*}
 
 	if [ -z "$feed" ] || [ "$pkgdir" = "$rest" ]; then
 		echo "!! $patch 的路径不符合 feed-patches/<feed>/<包目录>/<文件>.patch，已跳过" >&2
@@ -206,13 +210,20 @@ done
 
 # 清掉 build_dir 里的旧拷贝，让增量编译重新 prepare 并重编这些包。
 #
-# 两个位置都要清：普通包在 build_dir/target-*/<包>，而 **kmod 包在
+# 三个位置都要清：普通包在 build_dir/target-*/<包>，**kmod 包在
 # build_dir/target-*/linux-<板>_<子目标>/<包>**（PKG_BUILD_DIR 默认是
-# $(KERNEL_BUILD_DIR)/<包名>）。只清前者等于没清：2026-10-17 查到
-# linux-airoha_an7583/airoha-xpon 里躺着 10-05 的旧源码（补丁前），
-# 而这个脚本每次都报"已套用/已清理"，编译出来的模块却还是旧的。
+# $(KERNEL_BUILD_DIR)/<包名>），而 **host 包在 build_dir/host/<包>-<版本>**。
+# 只清第一个等于没清：2026-10-17 查到 linux-airoha_an7583/airoha-xpon 里躺着
+# 10-05 的旧源码（补丁前），而这个脚本每次都报"已套用/已清理"，编译出来的
+# 模块却还是旧的。host 那一处是 2026-10-20 补上的：feeds/packages 的 gn 补丁
+# 改的是 Host/Configure，build_dir/host 里那份旧配置不删就永远不会重跑，
+# 补丁"套上了"而编译行为没变 —— 与上面那个旧源码是同一类坑。
+#
+# 目录名取包目录的 basename：pkgdir 可能是 devel/gn 这样的嵌套路径，而
+# build_dir 下按包名（gn）命名，不按 feeds 里的目录层级。
 for pkg in $changed_pkgs; do
-	for dir in build_dir/target-*/"$pkg" build_dir/target-*/linux-*/"$pkg"; do
+	base=${pkg##*/}
+	for dir in build_dir/target-*/"$base" build_dir/target-*/linux-*/"$base" build_dir/host/"$base"-*; do
 		[ -d "$dir" ] || continue
 		echo "==> 清理过期编译目录: $dir（下次 make 会重新拷贝源码并重编）"
 		rm -rf "$dir"

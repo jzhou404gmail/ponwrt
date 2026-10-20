@@ -1,0 +1,19 @@
+diff --git a/devel/gn/Makefile b/devel/gn/Makefile
+index d068590c9..2194b95bc 100644
+--- a/devel/gn/Makefile
++++ b/devel/gn/Makefile
+@@ -37,7 +37,13 @@ define Package/gn/description
+ endef
+ 
+ define Host/Configure
+-	$(PYTHON) $(HOST_BUILD_DIR)/build/gen.py \
++	# gn 的 build/gen.py 在 Linux 上默认挑 clang++（os.environ.get('CXX','clang++')），
++	# 而本机 clang++ 的 C++ 头搜索路径指向 GCC 13（/usr/include/c++/13），这台机器
++	# 只装了 GCC 12，于是编译报 "fatal error: 'map' file not found"。
++	# 显式用 HOSTCXX（g++）即可；用 _NOCACHE 版本是因为 HOSTCXX 可能带 ccache 前缀，
++	# 而 gen.py 会把该字符串当单个可执行文件调用。
++	# 注意：feeds update 会覆盖本文件，届时需重新打这个补丁。
++	CXX="$(HOSTCXX_NOCACHE)" $(PYTHON) $(HOST_BUILD_DIR)/build/gen.py \
+ 		--no-last-commit-position \
+ 		--allow-warnings
+ endef
