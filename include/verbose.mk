@@ -58,7 +58,13 @@ ifeq ($(findstring s,$(OPENWRT_VERBOSE)),)
     endif
     SUBMAKE=$(MAKE)
   else
-    SILENT:=>/dev/null $(if $(findstring w,$(OPENWRT_VERBOSE)),,2>&1)
+    # stdout 照旧静音（控制台的进度块由 build-watch.sh 解析 tmp/build.log 生成），
+    # 但 stderr 不再跟着丢进 /dev/null：顶层子 make（package/install、
+    # target/install、package/index …）的真实报错全在 stderr，一起吞掉的后果是
+    # tmp/build.log 里只剩一行 "make -r world: build failed"。2026-10-21 的
+    # kernel.version 事故就是这样隐身了：69 秒"失败"，日志里一个字都没有。
+    # 包内输出不受影响 —— include/subdir.mk 会单独 tee 到 logs/<包>/<步骤>.txt。
+    SILENT:=>/dev/null
     export QUIET:=1
     SUBMAKE=cmd() { $(SILENT) $(MAKE) -s "$$@" < /dev/null || { echo "make $$*: build failed. Please re-run make with -j1 V=s or V=sc for a higher verbosity level to see what's going on"; false; } } 8>&1 9>&2; cmd
   endif

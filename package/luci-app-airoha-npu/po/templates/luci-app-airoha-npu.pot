@@ -1,279 +1,815 @@
 msgid ""
-msgstr "Content-Type: text/plain; charset=UTF-8"
+msgstr ""
+"Project-Id-Version: luci-app-airoha-npu\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:673
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:715
+msgid "5 s refresh"
+msgstr ""
+
+msgid "ACTIVE"
+msgstr ""
+
+msgid "AP MODE"
+msgstr ""
+
+msgid "AP Mode Acceleration"
+msgstr ""
+
+msgid "Acceleration"
+msgstr ""
+
+msgid "Activated"
+msgstr ""
+
 msgid "Active"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:653
+msgid "Airoha Soc"
+msgstr ""
+
 msgid "Airoha SoC Status"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:581
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:584
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:585
-msgid "Apply"
+msgid "Airtime"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:580
-msgid "Applying..."
+msgid "Architecture"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:135
-msgid "Band %d"
+msgid "Auto-detected"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:398
-msgid "CPU"
+msgid "BND = bound to hardware (NPU path); UNB = learning (CPU path). The client renders the first 100 rows."
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:663
-msgid "CPU Cores"
+msgid "BND — bound to hardware"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:510
-msgid "CPU DMA 1"
+msgid "Band"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:511
-msgid "CPU DMA 2"
+msgid "Bands"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:657
+msgid "Binding rate (BND / total)"
+msgstr ""
+
+msgid "All"
+msgstr ""
+
+msgid "Bound"
+msgstr ""
+
+msgid "Bound / total PPE flows"
+msgstr ""
+
+msgid "CPU model / temperature"
+msgstr ""
+
+msgid "CPU Control"
+msgstr ""
+
+msgid "VLAN passthrough"
+msgstr ""
+
+msgid "Hardware flow offload (UCI firewall)"
+msgstr ""
+
+msgid "Bridge firewall passthrough · PPPoE"
+msgstr ""
+
+msgid "Weakest client"
+msgstr ""
+
+msgid "Signal grade: ≥ -75 good · -75 ~ -82 weak · < -82 poor (worst client RSSI)"
+msgstr ""
+
+msgid "Signal quality"
+msgstr ""
+
+msgid "Bridge & hardware buffer"
+msgstr ""
+
+msgid "Bridge / PON / Token Details"
+msgstr ""
+
+msgid "Bridge / WAN / Token Details"
+msgstr ""
+
+msgid "Bridge / Token Details"
+msgstr ""
+
+msgid "Bridge Details"
+msgstr ""
+
+msgid "Bridge RX dropped"
+msgstr ""
+
+msgid "Bridge RX packets"
+msgstr ""
+
+msgid "Bridge TX dropped"
+msgstr ""
+
+msgid "Bridge TX packets"
+msgstr ""
+
+msgid "CLEAN"
+msgstr ""
+
 msgid "CPU Frequency"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:583
-msgid "CPU set to"
+msgid "CPU Info"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:170
-msgid "Channel"
+msgid "CPU LOAD"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:179
-msgid "Channel usage"
+msgid "CPU PATH"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:171
+msgid "CPU Temperature"
+msgstr ""
+
+msgid "CPU frequency scaling is not available on this board"
+msgstr ""
+
+msgid "CPU frequency, NPU and frame engine, hardware offload switches · source luci.airoha_npu (5 s poll)"
+msgstr ""
+
+msgid "CPU settings saved — they will persist after a reboot"
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Check the WAN cable or SFP"
+msgstr ""
+
+msgid "Click to change ping target"
+msgstr ""
+
+msgid "Click to disable"
+msgstr ""
+
+msgid "Click to enable"
+msgstr ""
+
 msgid "Clients"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:473
-msgid "Copper PHY (LAN)"
+msgid "Conflicts & Alerts"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:385
-msgid "Counters unavailable"
+msgid "Frequency History"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:659
-msgid "Current Frequency"
+msgid "Core Count"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:588
-msgid "Direct PLL. Stock max 1200 MHz. Stable up to 1500 MHz."
+msgid "Critical"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:187
-msgid "Downlink to the clients / uplink from the clients"
+msgid "DETECTING"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:561
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:570
-msgid "Error:"
+msgid "DHCP disabled in UCI"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:698
+msgid "DROPPING"
+msgstr ""
+
+msgid "Device"
+msgstr ""
+
+msgid "Disabled"
+msgstr ""
+
+msgid "Downstream"
+msgstr ""
+
+msgid "Driver unavailable"
+msgstr ""
+
+msgid "Drop"
+msgstr ""
+
+msgid "ERROR"
+msgstr ""
+
+msgid "Enabled"
+msgstr ""
+
+msgid "Error: "
+msgstr ""
+
+msgid "Errors"
+msgstr ""
+
 msgid "Ethernet"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:582
-msgid "Failed:"
+msgid "Expected"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:675
+msgid "Failed"
+msgstr ""
+
+msgid "Failed to set ping target"
+msgstr ""
+
+msgid "Fair"
+msgstr ""
+
 msgid "Firmware / Clock / Cores"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:684
-msgid "Frame Engine"
+msgid "Flow Offload"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:392
-msgid ""
-"Frames forwarded by the hardware instead of the CPU. Traffic the router "
-"terminates itself is never offloaded, so a low share is normal."
+msgid "Forward transitions"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:579
-msgid "Frequencies above 1400 MHz may be unstable. Continue?"
+msgid "Frequency"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:660
+msgid "Ghost Shaper Active"
+msgstr ""
+
+msgid "Good"
+msgstr ""
+
 msgid "Governor"
 msgstr ""
 
-#: root/usr/share/rpcd/acl.d/luci-app-airoha-npu.json:3
-msgid "Grant access to Airoha SoC status (NPU + CPU + Frame Engine)"
+msgid "HEALTHY"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:393
-msgid "HW Offload"
+msgid "HW ACCELERATED"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:399
-msgid "HWF"
+msgid "HW Buffer"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:697
+msgid "HW offload is enabled but ISP latency is high. Latency management may be skipped by hardware acceleration."
+msgstr ""
+
+msgid "Hardware errors detected on WAN. Check WAN cable or SFP. Latency stats may be misleading."
+msgstr ""
+
+msgid "IDLE"
+msgstr ""
+
+msgid "Idle"
+msgstr ""
+
 msgid "Index"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:252
-msgid "Instantaneous PSE queue occupancy of the WDMA port"
+msgid "Integrity"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:471
-msgid "LAN Switch (lan2-lan4)"
+msgid "Internal Switch"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:333
-msgid "Link"
+msgid "Jitter"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:661
-msgid "Max Frequency"
+msgid "LAN"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:578
-msgid "Must be 500-1600 MHz"
+msgid "LAN ports"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:669
+msgid "Latency"
+msgstr ""
+
+msgid "Link Overview"
+msgstr ""
+
+msgid "Local gateway detected"
+msgstr ""
+
+msgid "Max"
+msgstr ""
+
+msgid "Max Freq"
+msgstr ""
+
+msgid "Mode & Acceleration Status"
+msgstr ""
+
+msgid "Model"
+msgstr ""
+
+msgid "NO CLIENTS"
+msgstr ""
+
+msgid "NO DATA"
+msgstr ""
+
+msgid "NO LINK"
+msgstr ""
+
 msgid "NPU & Offload Engine"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:671
+msgid "NPU Bypass Detected"
+msgstr ""
+
+msgid "NPU Clock / Cores"
+msgstr ""
+
+msgid "NPU HW offload is bypassing CAKE SQM. Offloaded flows skip bufferbloat management — latency protection is inactive under load."
+msgstr ""
+
+msgid "NPU IDLE"
+msgstr ""
+
+msgid "NPU Path"
+msgstr ""
+
 msgid "NPU Status"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:228
-msgid "NPU offload active · WiFi → NPU → WDMA → PPE"
+msgid "NPU device ready"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:698
+msgid "NPU state"
+msgstr ""
+
 msgid "New Flow"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:478
-msgid ""
-"No GDM port resolved a netdev (the RPC returned none for gdm1/gdm2/"
-"gdm_copper)"
+msgid "No"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:229
-msgid "No NPU offload path · WiFi → PCIe → GDM3 (P3) → PPE"
+msgid "No CPU frequency controls are available on this board"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:618
-msgid "No offloaded flows"
+msgid "No CPU governors reported by the kernel"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:261
-msgid "No radio is up"
+msgid "No WAN IP detected"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:182
-msgid "Noise"
+msgid "No clients"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:674
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:715
-msgid "Not Active"
+msgid "No conflicts detected"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:698
+msgid "No data"
+msgstr ""
+
+msgid "No entries"
+msgstr ""
+
+msgid "No netdev"
+msgstr ""
+
+msgid "No optical signal"
+msgstr ""
+
+msgid "No selectable CPU frequencies reported by the kernel"
+msgstr ""
+
+msgid "No wireless hardware detected"
+msgstr ""
+
+msgid "Normal"
+msgstr ""
+
+msgid "Not Activated"
+msgstr ""
+
+msgid "Not provided without wireless hardware"
+msgstr ""
+
+msgid "ONU state"
+msgstr ""
+
+msgid "Offload Statistics"
+msgstr ""
+
+msgid "Offload share"
+msgstr ""
+
+msgid "Optical module"
+msgstr ""
+
+msgid "Optical signal present"
+msgstr ""
+
 msgid "Original Flow"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:662
-msgid "Overclock"
+msgid "PHY rate"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:448
-msgid "PCIe (WiFi)"
+msgid "PLE: no data source"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:472
-msgid "PON (WAN uplink)"
+msgid "PON"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:694
+msgid "PON mode"
+msgstr ""
+
+msgid "PON status"
+msgstr ""
+
+msgid "POOR"
+msgstr ""
+
+msgid "PPE Flow Monitor"
+msgstr ""
+
 msgid "PPE Flow Offload Entries"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:677
+msgid "PPPoE Offload"
+msgstr ""
+
+msgid "PSE port drops"
+msgstr ""
+
+msgid "PSE shared buffer"
+msgstr ""
+
+msgid "Pause"
+msgstr ""
+
+msgid "Per-band airtime efficiency, negotiated and expected rates, failure counts and BND/UNB ownership."
+msgstr ""
+
+msgid "Physical Bottleneck"
+msgstr ""
+
+msgid "Ping"
+msgstr ""
+
+msgid "Ping target"
+msgstr ""
+
+msgid "Ping target IP:"
+msgstr ""
+
+msgid "Ping target changed to: "
+msgstr ""
+
+msgid "Poor"
+msgstr ""
+
+msgid "ROUTER MODE"
+msgstr ""
+
+msgid "RX dropped"
+msgstr ""
+
+msgid "RX errors"
+msgstr ""
+
+msgid "Received"
+msgstr ""
+
+msgid "Refresh"
+msgstr ""
+
+msgid "Refreshing…"
+msgstr ""
+
 msgid "Reserved Memory"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:190
-msgid "Retry rate"
+msgid "Resume"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:169
-msgid "SSID"
+msgid "Retransmit"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:175
-msgid "Signal (weakest)"
+msgid "Retry"
 msgstr ""
 
-#: root/usr/share/luci/menu.d/luci-app-airoha-npu.json:3
-msgid "SoC Status"
+msgid "Router mode restricted"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:697
+msgid "Save"
+msgstr ""
+
+msgid "Sent"
+msgstr ""
+
+msgid "Signal"
+msgstr ""
+
 msgid "State"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:400
+msgid "Suggested off in router mode"
+msgstr ""
+
 msgid "TX"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:193
-msgid "TX failed"
+msgid "TX Token Pool"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:187
-msgid "Traffic"
+msgid "TX dropped"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:697
+msgid "TX errors"
+msgstr ""
+
+msgid "TX ring depth"
+msgstr ""
+
+msgid "TX ring depth / queued"
+msgstr ""
+
+msgid "TX ring queued"
+msgstr ""
+
+msgid "Temperature"
+msgstr ""
+
+msgid "The Latency card pings this host every 2 s to measure jitter. Enter an IP address or a hostname."
+msgstr ""
+
+msgid "The gauge row is an auto-fit grid: on a board without wireless the three WiFi gauges are not built at all, so the remainder reflows to fill the row."
+msgstr ""
+
+msgid "The per-band cards are indexed by wireless band and are skipped entirely on this board. The rest of the frame engine (PSE / GDM / CDM / NPU) is unaffected."
+msgstr ""
+
+msgid "Token pool"
+msgstr ""
+
+msgid "Token pool & TX rings"
+msgstr ""
+
+msgid "Total"
+msgstr ""
+
 msgid "Type"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:239
-msgid "WiFi chip temperature"
+msgid "UNB — learning (CPU path)"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:238
-msgid "WiFi chip temperature (limit %s °C)"
+msgid "Unbound"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:334
-msgid "down"
+msgid "Unknown"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:387
-msgid "no /dev/mem"
+msgid "Unsaved changes"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:386
-msgid "this RPC reports no CDM counters"
+msgid "Updated %s"
 msgstr ""
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:334
-msgid "up"
+msgid "Optical signal"
 msgstr ""
+
+msgid "shared"
+msgstr ""
+
+msgid "Upstream"
+msgstr ""
+
+msgid "Upstream rate"
+msgstr ""
+
+msgid "Uptime"
+msgstr ""
+
+msgid "Use hardware flow offload in router mode"
+msgstr ""
+
+msgid "VLAN Offload"
+msgstr ""
+
+msgid "WAN"
+msgstr ""
+
+msgid "WAN errors"
+msgstr ""
+
+msgid "WAN health"
+msgstr ""
+
+msgid "WAN ports"
+msgstr ""
+
+msgid "WEAK"
+msgstr ""
+
+msgid "Warning"
+msgstr ""
+
+msgid "WiFi Band Details"
+msgstr ""
+
+msgid "Working Mode"
+msgstr ""
+
+msgid "Yes"
+msgstr ""
+
+msgid "alerts"
+msgstr ""
+
+msgid "conservative"
+msgstr ""
+
+msgid "cores"
+msgstr ""
+
+msgid "flows"
+msgstr ""
+
+msgid "free"
+msgstr ""
+
+msgid "memory regions"
+msgstr ""
+
+msgid "more"
+msgstr ""
+
+msgid "ondemand"
+msgstr ""
+
+msgid "performance"
+msgstr ""
+
+msgid "powersave"
+msgstr ""
+
+msgid "samples"
+msgstr ""
+
+msgid "showing"
+msgstr ""
+
+msgid "truncated"
+msgstr ""
+
+msgid "used"
+msgstr ""
+
+msgid "userspace"
+msgstr ""
+
+msgid "v4"
+msgstr ""
+
+msgid "v6"
+msgstr ""
+
+msgid "Ethernet Ports"
+msgstr ""
+
+msgid "Port"
+msgstr ""
+
+msgid "Path"
+msgstr ""
+
+msgid "Link"
+msgstr ""
+
+msgid "Speed / Duplex"
+msgstr ""
+
+msgid "RX / TX bytes"
+msgstr ""
+
+msgid "RX / TX packets"
+msgstr ""
+
+msgid "RX / TX errors"
+msgstr ""
+
+msgid "RX / TX dropped"
+msgstr ""
+
+msgid "Port data unavailable"
+msgstr ""
+
+msgid "Unavailable"
+msgstr ""
+
+msgid "Up"
+msgstr ""
+
+msgid "Down"
+msgstr ""
+
+msgid "PPE table unavailable"
+msgstr ""
+
+msgid "No matching flows"
+msgstr ""
+
+msgid "Packets"
+msgstr ""
+
+msgid "Bytes"
+msgstr ""
+
+msgid "All states"
+msgstr ""
+
+msgid "All types"
+msgstr ""
+
+msgid "Previous page"
+msgstr ""
+
+msgid "Next page"
+msgstr ""
+
+msgid "Status"
+msgstr ""
+
+msgid "PHY / Expected"
+msgstr ""
+
+msgid "Switches here apply the hardware offload settings for this device."
+msgstr ""
+
+msgid "Frame Engine"
+msgstr ""
+
+msgid "Register-level counters for the GDM data MACs and CDM DMA engines, read from the frame-engine block."
+msgstr ""
+
+msgid "GDM Ports"
+msgstr ""
+
+msgid "TX packets"
+msgstr ""
+
+msgid "RX packets"
+msgstr ""
+
+msgid "No port"
+msgstr ""
+
+msgid "CDM Engines"
+msgstr ""
+
+msgid "CPU path"
+msgstr ""
+
+msgid "HW forwarded"
+msgstr ""
+
+msgid "CPU dropped"
+msgstr ""
+
+msgid "HW dropped"
+msgstr ""
+
+msgid "Frame Engine counters are unavailable on this build."
+msgstr ""
+
+msgid "Frame Engine counters need the devmem applet (CONFIG_BUSYBOX_CONFIG_DEVMEM) and /dev/mem; neither is available on this build."
+msgstr ""
+
+msgid "Frequency band"
+msgstr ""
+
+msgid "Link up"
+msgstr ""
+
+msgid "Link down"
+msgstr ""
+
+msgid "Total received"
+msgstr ""
+
+msgid "WAIT"
+msgstr ""
+
+msgid "REGISTERING"
+msgstr ""
+
+msgid "REGISTER_REQUEST"
+msgstr ""
+
+msgid "REGISTER_PENDING"
+msgstr ""
+
+msgid "REGISTERED"
+msgstr ""
+
+msgid "DENIED"
+msgstr ""
+

@@ -412,7 +412,7 @@ ifneq ($(CONFIG_USE_APK),)
 	$(if $(mkfs_packages_remove), \
 		-$(apk_target) del $(mkfs_packages_remove))
 	$(if $(mkfs_packages_add), \
-		$(apk_target) add $(mkfs_packages_add))
+		$(apk_target) add $(APK_USERMODE) $(mkfs_packages_add))
 else
 	rm -rf $(mkfs_cur_target_dir) $(mkfs_cur_target_dir).opkg
 	$(CP) $(TARGET_DIR_ORIG) $(mkfs_cur_target_dir)

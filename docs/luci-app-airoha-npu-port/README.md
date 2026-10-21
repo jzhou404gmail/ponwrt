@@ -87,8 +87,8 @@ n7581-znxt-zn515xg-d                GDM1->eth0  GDM2->pon0[WAN]  GDM4->lan1
 
 ## 五、界面/行为改动
 
-- **GDM2 卡片** = 活跃的 PON/WAN 卡：TX/RX、丢包、链路状态（`carrier`，由
-  `airoha-xpon` 随 ONU 注册/US-GEM 状态驱动）、解析到的网口名。
+- **GDM2 卡片** = 活跃的 PON/WAN 卡：TX/RX、丢包、链路状态（`pon.los` + GPON 的
+  `O1`–`O7`，EPON 则看 802.3ah 的 `mpcp_state`；`carrier` 只用于速率）、解析到的网口名。
 - **GDM4 卡片** = Copper PHY（LAN），带动态速率标签。
 - **PSE 端口网格**：`P2`→GDM2(PON/WAN)、`P9`→Copper PHY；丢包统计由 P1/P9 扩到 **P1/P2/P9**；
   `P7`（CDM4）从网格移除，改由 CDM4 卡片负责。
@@ -608,4 +608,79 @@ nokia,xg-040g-tf-ubi` 与 `unionman,ung00a` 各补了一行 `lan1`。
 而 EN8811H 驱动在 `air_leds_init()` 里把 LED 切到 user-defined 模式，
 不绑 netdev 触发器就永远是灭的 —— 504 上已实测证实。若你希望 MD 保持原样，
 删掉那两行即可（一句话的事），但 2.5G 口的灯会回到"插线上灯不亮"的状态。
+
+## 十一、EPON 线路：GDM2 链路显示「未知」（已修）
+
+现象（HG5382A / 192.168.32.254，10G-EPON 线路）：`状态 → SoC Status → 以太网端口`
+表里 `PON (pon0)` 那行，**Path=GDM2，Link 列显示 Unknown，速率却正常**
+（`10G↓ / 1G↑`，TX/RX 也在涨）。因为速率正常，很容易误判成"只是标签问题"，
+实际是链路状态的取值路径没有覆盖 EPON。
+
+### 11.1 取证
+
+```
+# 端口表这一行的三个输入（修复前）
+ubus call luci.airoha_npu getTopology | jsonfilter -e '@.pon'
+{ "present":1, "mode":null, "mode_name":"epon-10g-1g", "down_mbps":10000,
+  "up_mbps":1000, "los":0, "onu_state":"", "netdev":"pon0" }
+
+# carrier 恒为 1，所以速率走了 airoha_pon_rates() 的 10G/1G 回退
+cat /sys/class/net/pon0/carrier          # 1
+# EPON 没有 GPON 的 O 码；注册状态是 802.3ah 的 MPCP 状态机
+cat /sys/kernel/debug/airoha-xpon-pon0/registration | head -3
+mpcp_state: 4        # 4 = REGISTERED，LLID 已注册
+llid_valid: 1
+llid: 17
+```
+
+### 11.2 根因
+
+`ponLink()` 只认 `pon.onu_state` 的 `O5` / `O1`–`O7`。EPON 模式下 xpon 驱动的
+`registration` 节点输出的是：
+
+```
+onu_state: not-applicable
+mpcp_state: 4
+```
+
+`airoha_pon_onu_state()` 的 awk 只匹配 `^O[1-9]$`，于是 `onu_state` 为空，
+前端落到最后的 `Unknown` 分支。**carrier=1 且 `epon-10g-1g` 的速率回退正常**，
+所以同一行速率看起来完全没问题 —— 与现场现象一致。
+
+### 11.3 修复
+
+- 后端 `airoha-common.sh` 新增 `airoha_pon_mpcp_state()`，从同一个
+  `registration` 节点读 `mpcp_state`，并在 `topology.pon` 里新增
+  `"mpcp_state":<0..5|null>`（GPON/XGS-PON 没有这个节点，保持 `null`）。
+- 前端 `ponLink()`：先按 O 码判定；取不到 O 码且 `mpcp_state` 有效时按
+  802.3ah 判定 —— **4 = REGISTERED → `Link up (REGISTERED)`**，
+  0–3/5 → `Link down (WAIT/REGISTERING/REGISTER_REQUEST/REGISTER_PENDING/DENIED)`。
+  这与内核 LED 代码在 EPON 上把 registered LLID 当作 service-ready 的条件一致。
+- 六个 MPCP 状态名都走 `_()`，并在 `po/zh_Hans` 里补了翻译：
+  `REGISTERED → 已注册`、`WAIT → 等待`、`REGISTERING → 注册中`、
+  `REGISTER_REQUEST → 请求注册`、`REGISTER_PENDING → 注册确认中`、`DENIED → 注册被拒`。
+  因此中文界面显示 **`已连接 (已注册)`**。若手工部署的构建没有重建 `.lmo`，
+  `_()` 会回退到 msgid（`REGISTERED`），列不会变空。
+- 回归测试：`docs/luci-app-airoha-npu-port/tests/pon_link.js`（直接抽取源码里的
+  `ponLink` 跑 GPON / EPON / LOS / 旧后端各分支，并检查 `REGISTERED` 的中文翻译）。
+
+### 11.4 修复后
+
+```
+$ ubus call luci.airoha_npu getTopology | jsonfilter -e '@.pon'
+{ ..., "onu_state":"", "mpcp_state":4, "netdev":"pon0" }
+
+# 用真机 topology + zh_Hans 目录渲染视图后的端口行：
+PON (pon0)  GDM2  已连接 (已注册)  10G↓ / 1G↑  ...
+```
+
+热部署时除了 `status.js` / `airoha-common.sh`，还要把重新编译的
+`/usr/lib/lua/luci/i18n/luci-app-airoha-npu.zh-cn.lmo` 一起放上去，并清掉
+`/tmp/luci-indexcache.*`；否则 `_('REGISTERED')` 找不到词条，会回退显示
+`REGISTERED`（不会空缺，但中文界面就看不到「已注册」）。
+
+GPON 机型不受影响：没有 `mpcp_state` 时仍走原来的 O 码分支；`los=1` 仍优先显示
+`Link down (LOS)`。旧后端（无 `mpcp_state` 字段）在 EPON 上仍显示 `Unknown`，
+属预期 —— 前端对缺失字段保持向后兼容。
+
 

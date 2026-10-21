@@ -143,7 +143,7 @@ APK_INSTALL_ARGS = \
 define apk_install_rootfs
 	mkdir -p $(TARGET_DIR)/tmp
 	$(file >$(TMP_DIR)/apk_install_list,$(APK_INSTALL_ARGS))
-	$(call apk,$(TARGET_DIR)) add --no-cache --initdb --no-scripts --arch $(ARCH_PACKAGES) \
+	$(call apk,$(TARGET_DIR)) add $(APK_USERMODE) --no-cache --initdb --no-scripts --arch $(ARCH_PACKAGES) \
 		--repositories-file /dev/null --repository file://$(PACKAGE_DIR_ALL)/packages.adb \
 		$(if $(CONFIG_SIGNED_PACKAGES),,--allow-untrusted) \
 		$$(cat $(TMP_DIR)/apk_install_list)
