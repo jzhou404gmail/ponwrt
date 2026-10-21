@@ -1,129 +1,50 @@
-# luci-app-airoha-npu (PonWrt port)
+# luci-app-airoha-npu（上游 2.0.0，随仓库 vendored）
 
-Real-time monitoring and management dashboard for the Airoha AN7581 and
-AN7583 SoCs: NPU offload, CPU frequency, Frame Engine internals and the PPE
-flow table.
+- 上游：<https://github.com/naoki66/luci-app-airoha> @ `323539cf229bce52754fbb318135c9c56c514d2f`
+- 版本：2.0.0-r9
 
-This is a port of [rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)
-v1.1.4 to **PonWrt**, where the WAN is the **PON port** instead of the EN8811
-2.5G copper PHY.
+Airoha AN7581 / AN7583 的 SoC/NPU 状态页：CPU（频率/调频/温度）、Frame Engine
+（GDM/CDM/PSE 计数器）、PPE 硬件卸载（flow 表、命中率、绑定数）、以太网拓扑、
+以及按机型显示的 WiFi 状态。
 
-## What changed compared to upstream
+## 为什么整包换成上游 2.0.0
 
-Upstream was written for a board where the upstream link was the 2.5G PHY on
-GDM4 (netdev `wan`) and the PON data path on GDM2 was disabled in the DTS, so
-the GDM2 card was hardcoded as "not active".
+本仓库原先放的是 1.1.4 的 PonWrt 移植版（`package/luci-app-airoha-npu` 1.2.0），
+当时为了适配"WAN 走 PON 而非 EN8811 2.5G"改了不少地方：从活体设备树解析
+GDM→netdev、加 CDM1/CDM2 卡片等。
 
-On PonWrt the roles are inverted:
+上游 2.0.0 已经把这些做进去了，而且做得更彻底：
 
-| | upstream | PonWrt |
-|---|---|---|
-| WAN | GDM4 / EN8811 2.5G / `wan` | **GDM2 / XPON GEM / `pon0`** |
-| 2.5G PHY | WAN | **LAN (`lan1`)** |
-| LAN switch master | `dsa-mgr` (set by DTS) | `eth0` (no `netdev-name` in the DTS) |
+- WAN 从 `ubus call network.interface.wan status` 取，不认网卡名 —— PON 上
+  `wan` 接口就是 `pon0`，天然适配；
+- GDM 寄存器块按设备树的 `ethernet@N` 索引解析，不硬编码；
+- 有 **CDM Engines** 卡片（1.2.0 里是手工加的 CDM1/CDM2）。
 
-Because none of those netdev names are stable across the boards PonWrt
-supports, the GDM → netdev map is no longer hardcoded. The RPC backend
-resolves it at runtime from the live device tree
-(`/sys/class/net/*/of_node` → `ethernet@N` / `ethernet-port@M`), the same
-source `/lib/preinit/04_set_netdev_label` uses to apply
-`openwrt,netdev-name`. The PON port is additionally tagged by
-`airoha,pon-data-path`.
+所以继续保持本地分支的代价大于收益：界面越走越远，还得自己维护。换成上游后
+界面与上游 100% 一致。
 
-Concretely:
+## 相对上游的改动（只有两处）
 
-- **GDM2 card** is now the active PON / WAN card. It shows live TX/RX, drops
-  and the link state (`carrier`, which `airoha-xpon` drives from the ONU
-  registration / service GEM state), and the resolved netdev name.
-- **Copper PHY card** is labeled as the board's 2.5G/10G PHY (a LAN port here).
-  Its GDM is resolved rather than assumed: AN7581 wires the external PHY to
-  **GDM4** (`ethernet@4`, PSE port `P9`), while AN7583 has no `ethernet@4` at
-  all and puts it on **GDM3** (`ethernet@3`, PSE port `P3`), with GDM4 reaching
-  only the PCIe/USB SerDes there. The RPC reports the resolved index as
-  `gdm_copper` (the legacy `gdm4` key is still emitted for older clients) and
-  identifies the port by its DTS `phy-mode`, the same way the netdev names are
-  resolved. The card and the PSE cell are named from that index, and the
-  `P9`/`P3` RX-drop counter follows it.
-- **PSE port grid**: `P2` = GDM2 (PON/WAN) and the copper port as above; RX
-  drops are collected for P1/P2 plus the copper port instead of P1/P9.
-- **`/usr/bin/ppe-verify`** resolves the WAN interface instead of assuming
-  `wan`. It also no longer uses the `${var^^}` bashism (which aborts busybox
-  ash) and no longer double-prints `0` when the PPE table is empty.
-- Chinese (`zh_Hans`) translation added; the Spanish one was refreshed.
+1. `menu.d` 的标题由 `Airoha Soc` 改成 `Airoha SoC`（大小写；菜单路径沿用上游的
+   `admin/status/airoha`）。
+2. 加 `PKG_PO_VERSION`：本包不在 luci feed 里，`findrev` 取不到 git 历史，
+   `luci-i18n-airoha-npu-zh-cn` 会被打成版本 0，翻译更新永远无法作为升级安装。
+   与 `package/lucky`、`package/luci-app-mesh-conf` 同样处理。
 
-Everything else (register offsets, PPE debugfs parsing, CPU governor /
-max-frequency / overclock controls, theme handling) is unchanged from
-upstream v1.1.4.
+## 运行时前提（镜像里已满足）
 
-## Features
+Frame Engine 那一段直接读物理内存窗口，需要 kernel 与 busybox 两半都开：
 
-- **CPU frequency** — current frequency bar, governor selection, max frequency
-  selection, direct PLL overclock (500–1600 MHz) and overclock detection.
-- **NPU & offload engine** — firmware version, clock, core count, bind state,
-  reserved memory summary.
-- **Frame Engine** — PSE shared buffer accounting, GDM port cards with live
-  counters, PSE port queue grid (OQ/IQ reservations, drops).
-- **PPE flow table** — first 100 entries with state, type, 5-tuple and MAC
-  addresses, refreshed every 5 seconds.
-- **Theme adaptive** — samples the page background luminance, works with any
-  LuCI theme.
-
-## Requirements
-
-- PonWrt (`@TARGET_airoha`), LuCI 24.10+
-- `/sys/kernel/debug/ppe/{entries,bind}` (debugfs is mounted by
-  `/etc/init.d/boot`)
-- `/dev/mem` + the busybox `devmem` applet for the Frame Engine PSE registers
-  and for overclocking. Both are already enabled in the PonWrt default build
-  (`CONFIG_KERNEL_DEVMEM=y`, `CONFIG_BUSYBOX_CONFIG_DEVMEM=y`). Without them the
-  GDM/NPU/PPE cards keep working and only the PSE bar/grid is greyed out.
-- `jsonfilter`, `strings` (busybox applet) — both enabled by default.
-
-## Data sources
-
-| Data | Source |
-|------|--------|
-| NPU status | `/sys/bus/platform/drivers/airoha-npu/`, `dmesg` |
-| NPU firmware version | `fw_version` sysfs if the kernel exports it, else the `NPU fw version:` dmesg line |
-| CPU frequency | `/sys/devices/system/cpu/cpufreq/policy0/` |
-| Overclock PLL | `devmem` 0x1fa202b4 / 0x1fa202b8 |
-| PPE entries | `/sys/kernel/debug/ppe/{entries,bind}` |
-| Reserved memory | `dmesg` "OF: reserved mem:" lines |
-| GDM counters | `/sys/class/net/<dev>/statistics/*` (kernel accumulated, avoids the read-to-clear MIB race) |
-| GDM → netdev map | `/sys/class/net/*/of_node` (live device tree) |
-| PSE shared buffer | `devmem` 0x1fb5008c / 0x1fb50090 |
-| PSE port queues | `devmem` 0x1fb50080 / 0x1fb50084 (indirect read) |
-| PSE IQ reservations | `devmem` 0x1fb50108 / 0x1fb5010c |
-
-## RPC methods
-
-| Method | Description | Parameters |
-|--------|-------------|------------|
-| `getStatus` | NPU, CPU, PPE summary | — |
-| `getPpeEntries` | PPE flow table (first 100) | — |
-| `getTokenInfo` | WiFi token pool & station stats (kept for parity; this board has no such WiFi path) | — |
-| `getFrameEngine` | PSE/GDM register and netdev counters | — |
-| `setGovernor` | Change CPU governor | `governor` |
-| `setMaxFreq` | Set CPU max frequency | `freq` (kHz) |
-| `setOverclock` | Direct PLL frequency set | `freq_mhz` |
-
-## Verifying on the device
-
-```sh
-# GDM -> netdev map (the basis for the whole view)
-for d in /sys/class/net/*; do echo "$(basename $d) -> $(basename $(readlink -f $d/of_node 2>/dev/null))"; done
-cat /sys/class/net/pon0/of_node/airoha,pon-data-path
-
-# NPU
-dmesg | grep -i "NPU fw version"
-cat /sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies
-
-# Frame Engine
-ls /sys/kernel/debug/ppe/; head -3 /sys/kernel/debug/ppe/entries
-devmem 0x1fb5008c
-dmesg | grep "OF: reserved mem:"
+```
+CONFIG_KERNEL_DEVMEM=y
+CONFIG_BUSYBOX_CUSTOM=y
+CONFIG_BUSYBOX_CONFIG_DEVMEM=y
 ```
 
-## License
+缺任一半，该块在运行时退化成 "devmem applet ... unavailable"。
 
-Apache-2.0. Original author: Ryan Chen (rchen14b).
+## 设备树补丁
+
+`target/linux/airoha/patches-6.18/950-npu-expose-fw-version-sysfs.patch` 给 NPU
+暴露 `fw_version` / `num_cores`，让版本号不必从 dmesg 抓（dmesg 刷掉后显示
+Unknown）。上游 RPC 本来就是"先读 sysfs、读不到再退回 dmesg"，所以 app 侧零改动。

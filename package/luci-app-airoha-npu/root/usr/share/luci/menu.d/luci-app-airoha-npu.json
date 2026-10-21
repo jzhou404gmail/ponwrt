@@ -1,13 +1,8 @@
 {
-	"admin/status/npu": {
-		"title": "SoC Status",
+	"admin/status/airoha": {
+		"title": "Airoha SoC",
 		"order": 15,
-		"action": {
-			"type": "view",
-			"path": "airoha_npu/status"
-		},
-		"depends": {
-			"acl": [ "luci-app-airoha-npu" ]
-		}
+		"action": { "type": "view", "path": "airoha_npu/status" },
+		"depends": { "acl": [ "luci-app-airoha-npu" ] }
 	}
 }

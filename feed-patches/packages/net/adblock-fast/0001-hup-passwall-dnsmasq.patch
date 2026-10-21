@@ -1,0 +1,20 @@
+diff --git a/net/adblock-fast/files/lib/adblock-fast/adblock-fast.uc b/net/adblock-fast/files/lib/adblock-fast/adblock-fast.uc
+index 55cfd30bf..85049bd05 100644
+--- a/net/adblock-fast/files/lib/adblock-fast/adblock-fast.uc
++++ b/net/adblock-fast/files/lib/adblock-fast/adblock-fast.uc
+@@ -479,7 +479,14 @@ function download(url, dest) {
+ }
+ 
+ function service_restart(name) {
+-	return system(sprintf('/etc/init.d/%s restart >/dev/null 2>&1', name)) == 0;
++	let rc = system(sprintf('/etc/init.d/%s restart >/dev/null 2>&1', name)) == 0;
++	// PassWall runs its own dnsmasq (dnsmasq_default) outside procd and
++	// inherits the main instance's servers-file.  HUP it after every main
++	// dnsmasq restart, otherwise LAN clients keep the pre-update block-list
++	// until PassWall is restarted.
++	if (name == 'dnsmasq')
++		system("for p in $(pidof dnsmasq_default); do kill -HUP $p; done");
++	return rc;
+ }
+ 
+ function service_enabled(name) {

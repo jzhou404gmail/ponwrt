@@ -43,9 +43,14 @@ opkg = \
 	--add-arch all:100 \
 	--add-arch $(if $(ARCH_PACKAGES),$(ARCH_PACKAGES),$(BOARD)):200
 
+# Root builds can let fakeroot fake ownership; non-root builds cannot chown
+# to root, so let apk record the ownership in its database instead.
+APK_USERMODE = $(if $(filter 0,$(shell id -u)),,--usermode --no-chown)
+APK_FAKEROOT = $(if $(filter 0,$(shell id -u)),$(FAKEROOT),)
+
 apk = \
   IPKG_INSTROOT=$(1) \
-  $(FAKEROOT) $(STAGING_DIR_HOST)/bin/apk \
+  $(APK_FAKEROOT) $(STAGING_DIR_HOST)/bin/apk \
 	--root $(1) \
 	--keys-dir $(if $(APK_KEYS),$(APK_KEYS),$(TOPDIR)) \
 	--no-logfile \

@@ -1,0 +1,23 @@
+diff --git a/net/adblock-fast/files/lib/adblock-fast/adblock-fast.uc b/net/adblock-fast/files/lib/adblock-fast/adblock-fast.uc
+index 55cfd30bf..d6855f070 100644
+--- a/net/adblock-fast/files/lib/adblock-fast/adblock-fast.uc
++++ b/net/adblock-fast/files/lib/adblock-fast/adblock-fast.uc
+@@ -483,7 +483,17 @@ function service_restart(name) {
+ }
+ 
+ function service_enabled(name) {
+-	return system(sprintf('/etc/init.d/%s enabled >/dev/null 2>&1', name)) == 0;
++	// Never exec the init script here: sourcing procd.sh takes the service
++	// flock, so while a start/dl is running this blocks rpcd -- and rpcd is
++	// single-threaded, which freezes every LuCI page until the start ends
++	// (adblock-fast issue #9).  The autostart flag is just the rc.d symlink.
++	let entries = lsdir('/etc/rc.d') || [];
++	for (let entry in entries) {
++		let m = match(entry, /^S[0-9][0-9](.+)$/);
++		if (m && m[1] == name)
++			return true;
++	}
++	return false;
+ }
+ 
+ // ── Memory / System Info ────────────────────────────────────────────

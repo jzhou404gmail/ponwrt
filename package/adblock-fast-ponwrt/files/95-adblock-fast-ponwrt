@@ -1,0 +1,68 @@
+#!/bin/sh
+# PonWrt: adblock-fast defaults for the DNS-only, PassWall-friendly setup.
+#
+# PassWall owns the client-facing DNS path (nft redirect :53 -> its own
+# dnsmasq on :11400 -> chinadns-ng).  Its dnsmasq inherits the main
+# instance's servers-file, so adblock-fast must:
+#   * keep force_dns=0  (otherwise its fw4 redirect can bypass chinadns-ng)
+#   * use dnsmasq.servers
+#   * let feed-patches/packages/net/adblock-fast/0001-hup-passwall-dnsmasq.patch
+#     HUP dnsmasq_default after every main dnsmasq restart
+#
+# The block-list itself is downloaded at boot into /var/run; the two
+# subscription lists below plus the Xiaomi/TV ad domains are the tested
+# combination from 2026-10-21.
+
+[ -f /etc/config/adblock-fast ] || exit 0
+
+uci -q set adblock-fast.config.enabled='1'
+uci -q set adblock-fast.config.force_dns='0'
+uci -q set adblock-fast.config.dns='dnsmasq.servers'
+uci -q set adblock-fast.config.dnsmasq_instance='*'
+uci -q set adblock-fast.config.verbosity='2'
+uci -q set adblock-fast.config.download_timeout='30'
+uci -q set adblock-fast.config.download_connect_timeout='10'
+
+add_feed() {
+	local name="$1"
+	local url="$2"
+
+	uci -q show adblock-fast | grep -q "name='$name'" && return 0
+	uci -q add adblock-fast file_url >/dev/null || return 1
+	uci -q set "adblock-fast.@file_url[-1].name=$name"
+	uci -q set "adblock-fast.@file_url[-1].url=$url"
+	uci -q set "adblock-fast.@file_url[-1].action=block"
+	uci -q set "adblock-fast.@file_url[-1].enabled=1"
+}
+
+add_domain() {
+	local d="$1"
+
+	uci -q get adblock-fast.config.blocked_domain | tr ' ' '\n' | grep -qx "$d" && return 0
+	uci -q add_list adblock-fast.config.blocked_domain="$d" >/dev/null 2>&1
+}
+
+add_feed 'anti-AD' 'https://anti-ad.net/domains.txt'
+add_feed 'OISD - Small' 'https://small.oisd.nl/'
+
+for d in \
+	api.ad.xiaomi.com new.api.ad.xiaomi.com sdkconfig.ad.xiaomi.com cdn.ad.xiaomi.com \
+	ad.xiaomi.com ad1.xiaomi.com ad.mi.com ssp.ad.xiaomi.com e.ad.xiaomi.com adl.xiaomi.com \
+	adkconfig.ad.xiaomi.com test.ad.xiaomi.com test.new.api.ad.xiaomi.com api.tv.mi.com \
+	tvapi.kuyun.com config.kuyun.com logonext.tv.kuyun.com alert.kuyun.com \
+	mitv.tracking.miui.com metok.sys.miui.com data.mistat.xiaomi.com alog.umeng.com \
+	adv.sec.miui.com tracking.miui.com \
+	ad.hpplay.cn adc.hpplay.cn adcdn.hpplay.cn adeng.hpplay.cn adks.hpplay.cn \
+	api.cupid.ptqy.gitv.tv t7z.cupid.ptqy.gitv.tv t7z.cupid.ptqy.gity.tv \
+	adx.v.mitvos.com mitv-mife.tv.mioffice.cn xiaomi-dtv.m.cn.miaozhen.com track.ad.xiaomi.com
+do
+	add_domain "$d"
+done
+
+uci -q commit adblock-fast
+
+# The package normally enables itself in postinst; keep this idempotent for
+# images built with a different package manager behaviour.
+[ -x /etc/init.d/adblock-fast ] && /etc/init.d/adblock-fast enable >/dev/null 2>&1
+
+exit 0

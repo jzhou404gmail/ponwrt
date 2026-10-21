@@ -1,291 +1,822 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: luci-app-airoha-npu\n"
-"POT-Creation-Date: \n"
-"PO-Revision-Date: \n"
-"Last-Translator: \n"
-"Language-Team: \n"
 "Language: zh_Hans\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:673
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:715
+msgid "5 s refresh"
+msgstr "5 秒刷新"
+
+msgid "ACTIVE"
+msgstr "活动"
+
+msgid "AP MODE"
+msgstr "AP 模式"
+
+msgid "AP Mode Acceleration"
+msgstr "AP模式加速"
+
+msgid "Acceleration"
+msgstr "加速开关"
+
+msgid "Activated"
+msgstr "已激活"
+
 msgid "Active"
-msgstr "运行中"
+msgstr "活动"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:653
+msgid "Airoha Soc"
+msgstr "Airoha SoC"
+
 msgid "Airoha SoC Status"
-msgstr "Airoha SoC 状态"
+msgstr "Airoha SoC状态"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:581
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:584
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:585
-msgid "Apply"
-msgstr "应用"
+msgid "Airtime"
+msgstr "空口效率"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:580
-msgid "Applying..."
-msgstr "正在应用…"
+msgid "Architecture"
+msgstr "架构"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:135
-msgid "Band %d"
-msgstr "频段 %d"
+msgid "Auto-detected"
+msgstr "自动检测"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:398
-msgid "CPU"
-msgstr "CPU"
+msgid "BND = bound to hardware (NPU path); UNB = learning (CPU path). The client renders the first 100 rows."
+msgstr "BND = 已绑定硬件（走 NPU）；UNB = 学习中（走 CPU）。前端最多渲染前 100 行。"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:663
-msgid "CPU Cores"
-msgstr "CPU 核心数"
+msgid "BND — bound to hardware"
+msgstr "BND — 已绑定硬件"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:510
-msgid "CPU DMA 1"
-msgstr "CPU DMA 1"
+msgid "Band"
+msgstr "频段"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:511
-msgid "CPU DMA 2"
-msgstr "CPU DMA 2"
+msgid "Bands"
+msgstr "频段"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:657
+msgid "Binding rate (BND / total)"
+msgstr "绑定率（BND / 总表项）"
+
+msgid "All"
+msgstr "全部"
+
+msgid "Bound"
+msgstr "已绑定"
+
+msgid "Bound / total PPE flows"
+msgstr "已绑定 / PPE 总表项"
+
+msgid "CPU model / temperature"
+msgstr "CPU 型号 / 温度"
+
+msgid "CPU Control"
+msgstr "CPU控制"
+
+msgid "VLAN passthrough"
+msgstr "VLAN 包直通桥转发"
+
+msgid "Hardware flow offload (UCI firewall)"
+msgstr "硬件流量分载（UCI 防火墙）"
+
+msgid "Bridge firewall passthrough · PPPoE"
+msgstr "桥接包过防火墙 · PPPoE 直通"
+
+msgid "Weakest client"
+msgstr "最弱客户端"
+
+msgid "Signal grade: ≥ -75 good · -75 ~ -82 weak · < -82 poor (worst client RSSI)"
+msgstr "判定：≥ -75 良好 · -75 ~ -82 较弱 · < -82 差（取最弱客户端 RSSI）"
+
+msgid "Signal quality"
+msgstr "信号质量"
+
+msgid "Bridge & hardware buffer"
+msgstr "网桥与硬件缓冲"
+
+msgid "Bridge / PON / Token Details"
+msgstr "网桥 / PON / Token 明细"
+
+msgid "Bridge / WAN / Token Details"
+msgstr "网桥 / WAN / Token 明细"
+
+msgid "Bridge / Token Details"
+msgstr "网桥 / Token 明细"
+
+msgid "Bridge Details"
+msgstr "网桥明细"
+
+msgid "Bridge RX dropped"
+msgstr "桥 RX 丢弃"
+
+msgid "Bridge RX packets"
+msgstr "桥 RX 包"
+
+msgid "Bridge TX dropped"
+msgstr "桥 TX 丢弃"
+
+msgid "Bridge TX packets"
+msgstr "桥 TX 包"
+
+msgid "CLEAN"
+msgstr "正常"
+
 msgid "CPU Frequency"
 msgstr "CPU 频率"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:583
-msgid "CPU set to"
-msgstr "CPU 已设置为"
+msgid "CPU Info"
+msgstr "CPU 信息"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:170
-msgid "Channel"
-msgstr "信道"
+msgid "CPU LOAD"
+msgstr "CPU 负载"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:179
-msgid "Channel usage"
-msgstr "信道占用"
+msgid "CPU PATH"
+msgstr "CPU 路径"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:171
+msgid "CPU Temperature"
+msgstr "CPU 温度"
+
+msgid "CPU frequency scaling is not available on this board"
+msgstr "此设备不支持 CPU 频率调节"
+
+msgid "CPU frequency, NPU and frame engine, hardware offload switches · source luci.airoha_npu (5 s poll)"
+msgstr "CPU 频率、NPU 与帧引擎、硬件卸载开关 · 数据源 luci.airoha_npu（5 秒轮询）"
+
+msgid "CPU settings saved — they will persist after a reboot"
+msgstr "CPU 设置已保存，重启后依然生效"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "Check the WAN cable or SFP"
+msgstr "请检查 WAN 网线或光模块"
+
+msgid "Click to change ping target"
+msgstr "点击更改 Ping 目标"
+
+msgid "Click to disable"
+msgstr "点此关闭"
+
+msgid "Click to enable"
+msgstr "点此开启"
+
 msgid "Clients"
 msgstr "客户端"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:473
-msgid "Copper PHY (LAN)"
-msgstr "铜口 PHY（LAN）"
+msgid "Conflicts & Alerts"
+msgstr "冲突与告警"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:385
-msgid "Counters unavailable"
-msgstr "计数器不可用"
+msgid "Frequency History"
+msgstr "频率历史"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:659
-msgid "Current Frequency"
-msgstr "当前频率"
+msgid "Core Count"
+msgstr "核心数量"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:588
-msgid "Direct PLL. Stock max 1200 MHz. Stable up to 1500 MHz."
-msgstr "直接写 PLL。原厂最高 1200 MHz，1500 MHz 以内一般稳定。"
+msgid "Critical"
+msgstr "危险"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:187
-msgid "Downlink to the clients / uplink from the clients"
-msgstr "下行（发给客户端）/ 上行（客户端发来）"
+msgid "DETECTING"
+msgstr "探测中"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:561
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:570
-msgid "Error:"
+msgid "DHCP disabled in UCI"
+msgstr "UCI 中 DHCP 已禁用"
+
+msgid "DROPPING"
+msgstr "丢包"
+
+msgid "Device"
+msgstr "设备"
+
+msgid "Disabled"
+msgstr "已禁用"
+
+msgid "Downstream"
+msgstr "下行"
+
+msgid "Driver unavailable"
+msgstr "驱动未加载"
+
+msgid "Drop"
+msgstr "丢弃"
+
+msgid "ERROR"
+msgstr "错误"
+
+msgid "Enabled"
+msgstr "已启用"
+
+msgid "Error: "
 msgstr "错误："
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:698
+msgid "Errors"
+msgstr "错误"
+
 msgid "Ethernet"
 msgstr "以太网"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:582
-msgid "Failed:"
-msgstr "失败："
+msgid "Expected"
+msgstr "期望吞吐"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:675
+msgid "Failed"
+msgstr "失败"
+
+msgid "Failed to set ping target"
+msgstr "设置 Ping 目标失败"
+
+msgid "Fair"
+msgstr "一般"
+
 msgid "Firmware / Clock / Cores"
-msgstr "固件 / 频率 / 核心"
+msgstr "固件 / 时钟 / 核心"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:684
-msgid "Frame Engine"
-msgstr "帧引擎（Frame Engine）"
+msgid "Flow Offload"
+msgstr "硬件流量加速"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:392
-msgid ""
-"Frames forwarded by the hardware instead of the CPU. Traffic the router "
-"terminates itself is never offloaded, so a low share is normal."
-msgstr ""
-"被硬件转发（而不是交给 CPU）的帧占比。路由器自己终结的流量永远不会被硬件卸"
-"载，所以这个比例低是正常的。"
+msgid "Forward transitions"
+msgstr "转发状态迁移"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:579
-msgid "Frequencies above 1400 MHz may be unstable. Continue?"
-msgstr "频率超过 1400 MHz 可能不稳定，是否继续？"
+msgid "Frequency"
+msgstr "频率"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:660
+msgid "Ghost Shaper Active"
+msgstr "Ghost Shaper 活动"
+
+msgid "Good"
+msgstr "良好"
+
 msgid "Governor"
-msgstr "调频策略"
+msgstr "运行模式"
 
-#: root/usr/share/rpcd/acl.d/luci-app-airoha-npu.json:3
-msgid "Grant access to Airoha SoC status (NPU + CPU + Frame Engine)"
-msgstr "授予访问 Airoha SoC 状态（NPU + CPU + 帧引擎）的权限"
+msgid "HEALTHY"
+msgstr "健康"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:393
-msgid "HW Offload"
-msgstr "硬件卸载"
+msgid "HW ACCELERATED"
+msgstr "硬件加速"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:399
-msgid "HWF"
-msgstr "HWF"
+msgid "HW Buffer"
+msgstr "硬件缓冲"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:697
+msgid "HW offload is enabled but ISP latency is high. Latency management may be skipped by hardware acceleration."
+msgstr "硬件加速已启用，但 ISP 延迟较高。延迟管理可能被硬件加速跳过。"
+
+msgid "Hardware errors detected on WAN. Check WAN cable or SFP. Latency stats may be misleading."
+msgstr "检测到 WAN 硬件错误。请检查 WAN 网线或 SFP。延迟统计可能不准确。"
+
+msgid "IDLE"
+msgstr "空闲"
+
+msgid "Idle"
+msgstr "空闲"
+
 msgid "Index"
 msgstr "索引"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:252
-msgid "Instantaneous PSE queue occupancy of the WDMA port"
-msgstr "WDMA 口的 PSE 队列瞬时占用"
+msgid "Integrity"
+msgstr "信号质量"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:471
-msgid "LAN Switch (lan2-lan4)"
-msgstr "LAN 交换机（lan2-lan4）"
+msgid "Internal Switch"
+msgstr "内部交换"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:333
-msgid "Link"
-msgstr "链路"
+msgid "Jitter"
+msgstr "抖动"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:661
-msgid "Max Frequency"
-msgstr "最高频率"
+msgid "LAN"
+msgstr "LAN"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:578
-msgid "Must be 500-1600 MHz"
-msgstr "必须在 500-1600 MHz 之间"
+msgid "LAN ports"
+msgstr "LAN 端口"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:669
+msgid "Latency"
+msgstr "延迟"
+
+msgid "Link Overview"
+msgstr "链路总览"
+
+msgid "Local gateway detected"
+msgstr "检测到本地网关"
+
+msgid "Max"
+msgstr "上限"
+
+msgid "Max Freq"
+msgstr "最大频率"
+
+msgid "Mode & Acceleration Status"
+msgstr "模式与加速状态"
+
+msgid "Model"
+msgstr "型号"
+
+msgid "NO CLIENTS"
+msgstr "无客户端"
+
+msgid "NO DATA"
+msgstr "无数据"
+
+msgid "NO LINK"
+msgstr "无连接"
+
 msgid "NPU & Offload Engine"
-msgstr "NPU 与卸载引擎"
+msgstr "NPU硬件引擎"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:671
+msgid "NPU Bypass Detected"
+msgstr "检测到 NPU 绕过"
+
+msgid "NPU Clock / Cores"
+msgstr "NPU 时钟 / 核心"
+
+msgid "NPU HW offload is bypassing CAKE SQM. Offloaded flows skip bufferbloat management — latency protection is inactive under load."
+msgstr "NPU 硬件加速绕过了 CAKE SQM。加速的流量跳过了缓冲区管理——负载下的延迟保护未激活。"
+
+msgid "NPU IDLE"
+msgstr "NPU 空闲"
+
+msgid "NPU Path"
+msgstr "NPU 路径"
+
 msgid "NPU Status"
 msgstr "NPU 状态"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:228
-msgid "NPU offload active · WiFi → NPU → WDMA → PPE"
-msgstr "NPU 卸载已启用 · WiFi → NPU → WDMA → PPE"
+msgid "NPU device ready"
+msgstr "NPU 设备就绪"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:698
+msgid "NPU state"
+msgstr "NPU 状态"
+
 msgid "New Flow"
-msgstr "新五元组"
+msgstr "新连接"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:478
-msgid ""
-"No GDM port resolved a netdev (the RPC returned none for gdm1/gdm2/"
-"gdm_copper)"
-msgstr "未解析到任何 GDM 网口（RPC 未返回 gdm1/gdm2/gdm_copper 的 netdev）"
+msgid "No"
+msgstr "否"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:229
-msgid "No NPU offload path · WiFi → PCIe → GDM3 (P3) → PPE"
-msgstr "无 NPU 卸载路径 · WiFi → PCIe → GDM3 (P3) → PPE"
+msgid "No CPU frequency controls are available on this board"
+msgstr "此设备没有可用的 CPU 频率控制项"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:618
-msgid "No offloaded flows"
-msgstr "无卸载流表项"
+msgid "No CPU governors reported by the kernel"
+msgstr "内核未上报可用的 CPU 调频策略"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:261
-msgid "No radio is up"
-msgstr "没有已启用的射频"
+msgid "No WAN IP detected"
+msgstr "未检测到 WAN IP"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:182
-msgid "Noise"
-msgstr "噪声"
+msgid "No clients"
+msgstr "无客户端"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:674
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:715
-msgid "Not Active"
-msgstr "未运行"
+msgid "No conflicts detected"
+msgstr "当前没有检测到冲突"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:698
+msgid "No data"
+msgstr "无数据"
+
+msgid "No entries"
+msgstr "无条目"
+
+msgid "No netdev"
+msgstr "无网络设备"
+
+msgid "No optical signal"
+msgstr "无光信号"
+
+msgid "No selectable CPU frequencies reported by the kernel"
+msgstr "内核未上报可选的 CPU 频率"
+
+msgid "No wireless hardware detected"
+msgstr "未检测到无线硬件"
+
+msgid "Normal"
+msgstr "正常"
+
+msgid "Not Activated"
+msgstr "未激活"
+
+msgid "Not provided without wireless hardware"
+msgstr "无无线硬件时后端不返回"
+
+msgid "ONU state"
+msgstr "ONU 状态"
+
+msgid "Offload Statistics"
+msgstr "卸载统计"
+
+msgid "Offload share"
+msgstr "加速占比"
+
+msgid "Optical module"
+msgstr "光模块"
+
+msgid "Optical signal present"
+msgstr "有光信号"
+
 msgid "Original Flow"
-msgstr "原始五元组"
+msgstr "原始连接"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:662
-msgid "Overclock"
-msgstr "超频"
+msgid "PHY rate"
+msgstr "协商速率"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:448
-msgid "PCIe (WiFi)"
-msgstr "PCIe（WiFi）"
+msgid "PLE: no data source"
+msgstr "PLE：无数据源"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:472
-msgid "PON (WAN uplink)"
-msgstr "PON（WAN 上行）"
+msgid "PON"
+msgstr "PON"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:694
+msgid "PON mode"
+msgstr "PON 模式"
+
+msgid "PON status"
+msgstr "PON 状态"
+
+msgid "POOR"
+msgstr "较差"
+
+msgid "PPE Flow Monitor"
+msgstr "PPE 流量监控"
+
 msgid "PPE Flow Offload Entries"
-msgstr "PPE 流卸载表项"
+msgstr "PPE 硬件加速表"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:677
+msgid "PPPoE Offload"
+msgstr "PPPoE 透传卸载"
+
+msgid "PSE port drops"
+msgstr "PSE 端口丢弃累计"
+
+msgid "PSE shared buffer"
+msgstr "PSE 共享缓冲"
+
+msgid "Pause"
+msgstr "暂停"
+
+msgid "Per-band airtime efficiency, negotiated and expected rates, failure counts and BND/UNB ownership."
+msgstr "每频段的空口效率、协商与期望速率、失败计数以及 BND/UNB 归属。"
+
+msgid "Physical Bottleneck"
+msgstr "物理瓶颈"
+
+msgid "Ping"
+msgstr "Ping"
+
+msgid "Ping target"
+msgstr "Ping 目标"
+
+msgid "Ping target IP:"
+msgstr "Ping 目标 IP："
+
+msgid "Ping target changed to: "
+msgstr "Ping 目标已更改为："
+
+msgid "Poor"
+msgstr "较差"
+
+msgid "ROUTER MODE"
+msgstr "路由模式"
+
+msgid "RX dropped"
+msgstr "RX 丢弃"
+
+msgid "RX errors"
+msgstr "RX 错误"
+
+msgid "Received"
+msgstr "累计接收"
+
+msgid "Refresh"
+msgstr "刷新"
+
+msgid "Refreshing…"
+msgstr "刷新中…"
+
 msgid "Reserved Memory"
-msgstr "保留内存"
+msgstr "NPU 内存"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:190
-msgid "Retry rate"
-msgstr "重传率"
+msgid "Resume"
+msgstr "继续"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:169
-msgid "SSID"
-msgstr "SSID"
+msgid "Retransmit"
+msgstr "重传"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:175
-msgid "Signal (weakest)"
-msgstr "信号（最弱客户端）"
+msgid "Retry"
+msgstr "重传"
 
-#: root/usr/share/luci/menu.d/luci-app-airoha-npu.json:3
-msgid "SoC Status"
-msgstr "SoC 状态"
+msgid "Router mode restricted"
+msgstr "路由模式禁用"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:697
+msgid "Save"
+msgstr "保存"
+
+msgid "Sent"
+msgstr "累计发送"
+
+msgid "Signal"
+msgstr "信号"
+
 msgid "State"
 msgstr "状态"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:400
+msgid "Suggested off in router mode"
+msgstr "路由模式下建议关闭"
+
 msgid "TX"
-msgstr "TX"
+msgstr "发送"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:193
-msgid "TX failed"
-msgstr "发送失败"
+msgid "TX Token Pool"
+msgstr "TX Token 池"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:187
-msgid "Traffic"
-msgstr "流量"
+msgid "TX dropped"
+msgstr "TX 丢弃"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:697
+msgid "TX errors"
+msgstr "TX 错误"
+
+msgid "TX ring depth"
+msgstr "TX 环深度"
+
+msgid "TX ring depth / queued"
+msgstr "TX 环深度 / 排队"
+
+msgid "TX ring queued"
+msgstr "TX 环排队"
+
+msgid "Temperature"
+msgstr "温度"
+
+msgid "The Latency card pings this host every 2 s to measure jitter. Enter an IP address or a hostname."
+msgstr "延迟卡片每隔 2 秒 ping 该主机以测量抖动。请输入 IP 地址或主机名。"
+
+msgid "The gauge row is an auto-fit grid: on a board without wireless the three WiFi gauges are not built at all, so the remainder reflows to fill the row."
+msgstr "仪表行为 auto-fit 栅格：无无线硬件的机型上三个 WiFi 转速表完全不构造，剩余仪表自动并栏铺满整行。"
+
+msgid "The per-band cards are indexed by wireless band and are skipped entirely on this board. The rest of the frame engine (PSE / GDM / CDM / NPU) is unaffected."
+msgstr "频段卡按无线频段索引，在此机型上整块跳过渲染；帧引擎的其余部分（PSE / GDM / CDM / NPU）不受影响。"
+
+msgid "Token pool"
+msgstr "Token 池"
+
+msgid "Token pool & TX rings"
+msgstr "Token 池与 TX 环"
+
+msgid "Total"
+msgstr "总计"
+
 msgid "Type"
 msgstr "类型"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:239
-msgid "WiFi chip temperature"
-msgstr "WiFi 芯片温度"
+msgid "UNB — learning (CPU path)"
+msgstr "UNB — 学习中（走 CPU）"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:238
-msgid "WiFi chip temperature (limit %s °C)"
-msgstr "WiFi 芯片温度（上限 %s °C）"
+msgid "Unbound"
+msgstr "未绑定"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:334
-msgid "down"
-msgstr "断开"
+msgid "Unknown"
+msgstr "未知"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:387
-msgid "no /dev/mem"
-msgstr "无 /dev/mem"
+msgid "Unsaved changes"
+msgstr "有未保存的更改"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:386
-msgid "this RPC reports no CDM counters"
-msgstr "该 RPC 未上报 CDM 计数器"
+msgid "Updated %s"
+msgstr "更新于 %s"
 
-#: htdocs/luci-static/resources/view/airoha_npu/status.js:334
-msgid "up"
-msgstr "连通"
+msgid "Optical signal"
+msgstr "光信号"
+
+msgid "shared"
+msgstr "共享"
+
+msgid "Upstream"
+msgstr "上游"
+
+msgid "Upstream rate"
+msgstr "上游速率"
+
+msgid "Uptime"
+msgstr "在线时长"
+
+msgid "Use hardware flow offload in router mode"
+msgstr "路由模式下请改用硬件流量加速"
+
+msgid "VLAN Offload"
+msgstr "VLAN 标签卸载"
+
+msgid "WAN"
+msgstr "WAN"
+
+msgid "WAN errors"
+msgstr "WAN 错误"
+
+msgid "WAN health"
+msgstr "WAN 健康"
+
+msgid "WAN ports"
+msgstr "WAN 端口"
+
+msgid "WEAK"
+msgstr "较弱"
+
+msgid "Warning"
+msgstr "警告"
+
+msgid "WiFi Band Details"
+msgstr "WiFi 频段明细表"
+
+msgid "Working Mode"
+msgstr "工作模式"
+
+msgid "Yes"
+msgstr "是"
+
+msgid "alerts"
+msgstr "条告警"
+
+msgid "conservative"
+msgstr "保守模式"
+
+msgid "cores"
+msgstr "核"
+
+msgid "flows"
+msgstr "流"
+
+msgid "free"
+msgstr "空闲"
+
+msgid "memory regions"
+msgstr "段内存"
+
+msgid "more"
+msgstr "更多"
+
+msgid "ondemand"
+msgstr "按需模式"
+
+msgid "performance"
+msgstr "性能模式"
+
+msgid "powersave"
+msgstr "省电模式"
+
+msgid "samples"
+msgstr "个样本"
+
+msgid "showing"
+msgstr "显示"
+
+msgid "truncated"
+msgstr "已截断"
+
+msgid "used"
+msgstr "已用"
+
+msgid "userspace"
+msgstr "用户空间"
+
+msgid "v4"
+msgstr "v4"
+
+msgid "v6"
+msgstr "v6"
+
+msgid "Ethernet Ports"
+msgstr "以太网端口"
+
+msgid "Port"
+msgstr "端口"
+
+msgid "Path"
+msgstr "硬件路径"
+
+msgid "Link"
+msgstr "连接状态"
+
+msgid "Speed / Duplex"
+msgstr "协商速率 / 双工"
+
+msgid "RX / TX bytes"
+msgstr "接收 / 发送字节"
+
+msgid "RX / TX packets"
+msgstr "接收 / 发送包数"
+
+msgid "RX / TX errors"
+msgstr "接收 / 发送错误"
+
+msgid "RX / TX dropped"
+msgstr "接收 / 发送丢包"
+
+msgid "Port data unavailable"
+msgstr "端口数据不可用"
+
+msgid "Unavailable"
+msgstr "不可用"
+
+msgid "Up"
+msgstr "已连接"
+
+msgid "Down"
+msgstr "未连接"
+
+msgid "PPE table unavailable"
+msgstr "PPE 硬件加速表不可用"
+
+msgid "No matching flows"
+msgstr "没有匹配的流条目"
+
+msgid "Packets"
+msgstr "包数"
+
+msgid "Bytes"
+msgstr "字节数"
+
+msgid "All states"
+msgstr "全部状态"
+
+msgid "All types"
+msgstr "全部类型"
+
+msgid "Previous page"
+msgstr "上一页"
+
+msgid "Next page"
+msgstr "下一页"
+
+msgid "Status"
+msgstr "状态"
+
+msgid "PHY / Expected"
+msgstr "协商 / 预期速率"
+
+msgid "Switches here apply the hardware offload settings for this device."
+msgstr "此处开关用于应用本设备的硬件卸载设置。"
+
+msgid "Frame Engine"
+msgstr "帧引擎"
+
+msgid "Register-level counters for the GDM data MACs and CDM DMA engines, read from the frame-engine block."
+msgstr "直接读取帧引擎寄存器，展示 GDM 数据 MAC 与 CDM DMA 引擎的计数。"
+
+msgid "GDM Ports"
+msgstr "GDM 端口"
+
+msgid "TX packets"
+msgstr "TX 报文"
+
+msgid "RX packets"
+msgstr "RX 报文"
+
+msgid "No port"
+msgstr "无端口"
+
+msgid "CDM Engines"
+msgstr "CDM 引擎"
+
+msgid "CPU path"
+msgstr "CPU 路径"
+
+msgid "HW forwarded"
+msgstr "硬件转发"
+
+msgid "CPU dropped"
+msgstr "CPU 丢弃"
+
+msgid "HW dropped"
+msgstr "硬件丢弃"
+
+msgid "Frame Engine counters are unavailable on this build."
+msgstr "此构建无法读取帧引擎计数器。"
+
+msgid "Frame Engine counters need the devmem applet (CONFIG_BUSYBOX_CONFIG_DEVMEM) and /dev/mem; neither is available on this build."
+msgstr "帧引擎计数器需要 busybox 的 devmem 小程序（CONFIG_BUSYBOX_CONFIG_DEVMEM）和 /dev/mem，此构建两者都不具备。"
+
+msgid "Frequency band"
+msgstr "频段"
+
+msgid "Link up"
+msgstr "已连接"
+
+msgid "Link down"
+msgstr "未连接"
+
+msgid "Total received"
+msgstr "总接收"
+
+msgid "peak"
+msgstr "峰值"
+
+msgid "Fast path"
+msgstr "快路径"
+
+msgid "WAIT"
+msgstr "等待"
+
+msgid "REGISTERING"
+msgstr "注册中"
+
+msgid "REGISTER_REQUEST"
+msgstr "请求注册"
+
+msgid "REGISTER_PENDING"
+msgstr "注册确认中"
+
+msgid "REGISTERED"
+msgstr "已注册"
+
+msgid "DENIED"
+msgstr "注册被拒"
+

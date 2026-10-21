@@ -111,6 +111,13 @@ if [ -n "$CONFIG_NAME" ]; then
 	before_pkgs=$(grep -c '^CONFIG_PACKAGE_.*=y' .config 2>/dev/null || true)
 	[ -n "$before_pkgs" ] || before_pkgs=0
 
+	# 保护的是“这次要套的种子 + release.config”有没有被 defconfig 缩水，
+	# 不是拿它和上一台机型的 .config 比。切 7581 -> 7583 时两者包数本来
+	# 就不同（旧版 an7583 种子只有 210 个包），拿旧 .config 当基准会误报。
+	seed_before=$(cat "$SRC" configs/release.config 2>/dev/null |
+		grep '^CONFIG_PACKAGE_.*=y' | sort -u | wc -l | tr -d ' ')
+	[ -n "$seed_before" ] || seed_before=0
+
 	cat "$SRC" configs/release.config > .config
 	echo "==> 已套用 ${SRC} + configs/release.config，执行 make defconfig"
 	make defconfig </dev/null >/dev/null 2>&1 || true
@@ -118,14 +125,14 @@ if [ -n "$CONFIG_NAME" ]; then
 	after_pkgs=$(grep -c '^CONFIG_PACKAGE_.*=y' .config 2>/dev/null || true)
 	[ -n "$after_pkgs" ] || after_pkgs=0
 
-	if [ "$before_pkgs" -gt 0 ] && [ "$after_pkgs" -lt $((before_pkgs * 8 / 10)) ]; then
+	if [ "$seed_before" -gt 0 ] && [ "$after_pkgs" -lt $((seed_before * 8 / 10)) ]; then
 		echo "" >&2
-		echo "!! 已中止：包选择从 ${before_pkgs} 个掉到 ${after_pkgs} 个，疑似覆盖了你的手工配置。" >&2
+		echo "!! 已中止：本次种子有 ${seed_before} 个包，defconfig 后只剩 ${after_pkgs} 个，疑似种子被覆盖或不完整。" >&2
 		echo "!! 已把原配置还回去：${BAK} -> .config" >&2
 		cp -a "$BAK" .config
 		exit 1
 	fi
-	echo "==> 包选择数量: ${before_pkgs} -> ${after_pkgs}"
+	echo "==> 包选择数量: 当前 ${before_pkgs}；种子 ${seed_before} -> defconfig 后 ${after_pkgs}"
 fi
 
 if [ ! -f .config ]; then
@@ -299,6 +306,58 @@ kernel_tree_heal() {
 
 kernel_tree_heal
 
+# ---------- staging 内核版本愈合 ----------
+# staging_dir/target-<arch> 是按**架构**分的，an7581 和 an7583 共用同一份；而
+# kernel.version 只有一个，由 package/kernel/linux/Makefile 的 Package/kernel/install
+# 写进来：
+#     echo $(LINUX_VERSION)~$(LINUX_VERMAGIC)-r$(LINUX_RELEASE) > $(STAGING_DIR)/kernel.version
+# 它跟着"最后编过的那个子目标"走。于是 7583 编过一次之后再回头编 7581，staging 里
+# 留的是 7583 的 vermagic，而 7581 的 kernel 包和 kmod 都是 7581 自己的 vermagic。
+# package/install 拿
+#     APK_INSTALL_ARGS 里的 kernel=$(cat $(STAGING_DIR)/kernel.version)
+# 去 apk add，立刻撞车：
+#     ERROR: unable to select packages:
+#       kernel-6.18.52~2437c6e3…-r1:
+#         breaks: world[kernel=6.18.52~14510c60…-r1]
+# 更坑的是这一步的输出被 include/verbose.mk 的静默重定向丢掉，tmp/build.log 里只剩
+# 一行 "make -r world: build failed"，看着像随机失败（2026-10-21 实况：an7583 编完
+# 切回 an7581，69 秒就"失败"，翻遍日志只有这一行）。
+# 而增量编译不会重跑 kernel 包的 install（包已是最新），文件不会自己改回来，
+# 所以每次切换子目标都得手工修。这里开编前按当前子目标 bin/ 里最新的 kernel 包名
+# 直接改对——包名就是 kernel-<version>-r<release>.apk，去掉前后缀即 kernel.version。
+staging_kernel_version_heal() {
+	local board subtarget want kdir tdir kver
+
+	board=$(sed -n 's/^CONFIG_TARGET_BOARD="\(.*\)"/\1/p' .config)
+	subtarget=$(sed -n 's/^CONFIG_TARGET_SUBTARGET="\(.*\)"/\1/p' .config)
+	[ -n "$board" ] && [ -n "$subtarget" ] || return 0
+
+	# 6.18.52~<vermagic>-r1
+	want=$(ls -t "bin/targets/${board}/${subtarget}/packages"/kernel-*.apk 2>/dev/null |
+		head -1 || true)
+	[ -n "$want" ] || return 0
+	want=${want##*/}
+	want=${want#kernel-}
+	want=${want%.apk}
+
+	for kdir in build_dir/target-*/linux-"${board}_${subtarget}"; do
+		[ -d "$kdir" ] || continue
+		tdir=${kdir#build_dir/}
+		tdir=${tdir%%/*}                       # target-aarch64_cortex-a53_musl
+		kver="staging_dir/${tdir}/kernel.version"
+		if [ "$(cat "$kver" 2>/dev/null)" = "$want" ]; then
+			continue
+		fi
+		echo "==> staging 的 kernel.version 是别的子目标留下的："
+		echo "    $(cat "$kver" 2>/dev/null || echo '（缺失）')  ←  ${kver}"
+		echo "    当前目标 ${board}/${subtarget} 应为 ${want}"
+		echo "    改回来（否则 package/install 报 kernel … breaks: world[kernel=…]）"
+		echo "$want" > "$kver"
+	done
+}
+
+staging_kernel_version_heal
+
 # ---------- 失败自愈 ----------
 # 已知的一种时序性失败：某个包的子 make 被"静默打断"—— 现象是 tmp/build.log 里
 # 只有一行 "ERROR: <包> failed to build."，而它自己的 logs/<包>/compile.txt
@@ -349,16 +408,25 @@ while :; do
 		# （未走完正常收尾）"）。所以必须用 `|| VRC=$?` 把失败"接住"，让它变成
 		# 一个被判断的值。2026-10-17 实测踩到：体检报了"内核是 initramfs 的"，
 		# 自愈却没跑，镜像就那么留在 bin/ 里。
+		# 注意 ③：只体检**这次编的机型**。bin/targets 下通常还留着别的子目标上一次
+		# 构建的产物（an7583 编完切回 an7581 时就是这样），而 verify-images.sh 的
+		# 体积阈值（recovery ≤ 70 MiB）是按 7581 的 ~59 MiB rootfs 定的，7583 的
+		# 79 MiB rootfs 天生就超。全局体检会把别人的产物算成这次失败，还因为走的是
+		# "内核类失败"（rc=2）分支、直接删掉本机型的内核树重编一整遍 —— 白编，而且
+		# 下一轮照样被别人的产物判死。所以这里显式只传本机型的目录。
+		BOARD=$(sed -n 's/^CONFIG_TARGET_BOARD="\(.*\)"/\1/p' .config)
+		SUBTARGET=$(sed -n 's/^CONFIG_TARGET_SUBTARGET="\(.*\)"/\1/p' .config)
+		VERIFY_DIR="bin/targets"
+		[ -n "$BOARD" ] && [ -n "$SUBTARGET" ] && VERIFY_DIR="bin/targets/${BOARD}/${SUBTARGET}"
+		[ -d "$VERIFY_DIR" ] || VERIFY_DIR="bin/targets"
 		VRC=0
-		./verify-images.sh || VRC=$?
+		./verify-images.sh "$VERIFY_DIR" || VRC=$?
 		if [ "$VRC" -eq 0 ]; then
 			break
 		fi
 
 		if [ "$VRC" -eq 2 ] && [ "$KERNEL_REBUILT" -eq 0 ]; then
 			KERNEL_REBUILT=1
-			BOARD=$(sed -n 's/^CONFIG_TARGET_BOARD="\(.*\)"/\1/p' .config)
-			SUBTARGET=$(sed -n 's/^CONFIG_TARGET_SUBTARGET="\(.*\)"/\1/p' .config)
 			echo
 			echo "!! 内核产物不对（这一类是可以自愈的）：清掉内核构建树重新编一遍"
 			# 目录名是 KERNEL_BUILD_DIR = $(BUILD_DIR)/linux-$(BOARD)_$(SUBTARGET)
@@ -409,7 +477,14 @@ if [ "$RC" -ne 0 ]; then
 	tail -25 "$LOG" | sed 's/^/    /'
 	echo
 	echo "   完整日志: $LOG"
-	echo "   常见定位: grep -nE 'ERROR:|build failed' \"$LOG\" | tail"
+	echo "   常见定位: grep -nE 'ERROR:|Error [0-9]+|错误|build failed' \"$LOG\" | tail"
+	# 顶层子 make（package/install、target/install 等）失败时，make 的报错在 include/verbose.mk
+	# 里被静默重定向吞掉过，日志可能只剩 "make -r world: build failed" 一行。
+	if ! grep -qE '^ *ERROR: [^ ]+ failed to build' "$LOG" 2>/dev/null; then
+		echo "   注意: 这次失败不在某个包上（没有 'ERROR: <包> failed to build'），"
+		echo "         而是顶层步骤（package/install、target/install …）。单独复现："
+		echo "           make package/install V=s      # 或 make target/install V=s"
+	fi
 	print_summary "失败"
 	exit "$RC"
 fi
