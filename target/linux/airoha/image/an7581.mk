@@ -52,6 +52,18 @@ define Device/FitImageLzma
 	KERNEL_NAME := Image
 endef
 
+# LuCI apps that only make sense on a board with a WiFi radio: the WiFi client
+# history under Status and the WiFi schedule under Services.
+#
+# Keep this per device, not in configs/release.config: DEVICE_PACKAGES is what
+# makes each package "=m" (scripts/target-metadata.pl -> MODULE_DEFAULT_*) and
+# installs it into that device's own rootfs. Boards without a radio never list
+# this variable, so they never build or carry these packages.
+AIROHA_WIFI_PACKAGES := \
+	luci-app-wifihistory luci-i18n-wifihistory-zh-cn \
+	luci-app-wifischedule luci-i18n-wifischedule-zh-cn \
+	wifischedule
+
 define Device/airoha_an7581-evb
   $(call Device/FitImageLzma)
   DEVICE_VENDOR := Airoha
@@ -70,7 +82,8 @@ define Device/airoha_an7581-evb-emmc-eagle
   DEVICE_MODEL := AN7581 Evaluation Board (eMMC + Eagle)
   DEVICE_DTS := an7581-evb-emmc-eagle
   DEVICE_PACKAGES := airoha-en7581-mt7996-npu-firmware \
-		    kmod-mt7996-firmware wpad-openssl
+		    kmod-mt7996-firmware wpad-openssl \
+		    $(AIROHA_WIFI_PACKAGES)
   ARTIFACT/preloader.bin := an7581-preloader rfb
   ARTIFACT/bl31-uboot.fip := an7581-bl31-uboot rfb
   ARTIFACTS := preloader.bin bl31-uboot.fip
@@ -82,7 +95,8 @@ define Device/airoha_an7581-evb-emmc-kite
   DEVICE_MODEL := AN7581 Evaluation Board (eMMC + Kite)
   DEVICE_DTS := an7581-evb-emmc-kite
   DEVICE_PACKAGES := airoha-en7581-npu-firmware \
-		    kmod-mt7992-firmware wpad-openssl
+		    kmod-mt7992-firmware wpad-openssl \
+		    $(AIROHA_WIFI_PACKAGES)
   ARTIFACT/preloader.bin := an7581-preloader rfb
   ARTIFACT/bl31-uboot.fip := an7581-bl31-uboot rfb
   ARTIFACTS := preloader.bin bl31-uboot.fip
@@ -109,7 +123,7 @@ define Device/gemtek_w1700k-ubi
        the end of flash. A reinstall including corrected chainloader is needed.
   DEVICE_PACKAGES := airoha-en7581-mt7996-npu-firmware fitblk \
 		    kmod-hwmon-nct7802 kmod-mt7996-firmware wpad-openssl \
-		    rtl826x-firmware
+		    rtl826x-firmware $(AIROHA_WIFI_PACKAGES)
   UBINIZE_OPTS := -E 5
   BLOCKSIZE := 128k
   PAGESIZE := 2048
@@ -160,7 +174,8 @@ define Device/nokia_valyrian
     kmod-i2c-gpio kmod-iio-richtek-rtq6056 \
     kmod-sfp aeonsemi-as21xxx-firmware \
     kmod-mt7996-firmware airoha-en7581-mt7996-npu-firmware \
-    kmod-usb3 $(AIROHA_USB_STORAGE_PACKAGES)
+    kmod-usb3 $(AIROHA_USB_STORAGE_PACKAGES) \
+    $(AIROHA_WIFI_PACKAGES)
   ARTIFACT/preloader.bin := an7581-preloader nokia_valyrian
   ARTIFACT/bl31-uboot.fip := an7581-bl31-uboot nokia_valyrian
   ARTIFACTS := preloader.bin bl31-uboot.fip
@@ -212,7 +227,8 @@ define Device/fiberhome_hg5585f-common
     kmod-usb-ledtrig-usbport \
     kmod-airoha-paged-bosa kmod-airoha-xpon airoha-ponctl airoha-pond \
 	 kmod-mt7915e kmod-mt7916-firmware wpad-openssl \
-	 fitblk nand-utils ubi-utils $(AIROHA_USB_STORAGE_PACKAGES)
+	 fitblk nand-utils ubi-utils $(AIROHA_USB_STORAGE_PACKAGES) \
+	 $(AIROHA_WIFI_PACKAGES)
 endef
 
 # Expand FIT rules after DEVICE_DTS so each variant embeds its own DTB.
@@ -295,6 +311,7 @@ define Device/znxt_zn515xg-d
     kmod-airoha-en7572 kmod-airoha-xpon airoha-ponctl airoha-pond \
     kmod-mt7915e kmod-mt7916-firmware znxt-zn515-mt7916-eeprom \
     wpad-openssl \
+    $(AIROHA_WIFI_PACKAGES) \
     nand-utils ubi-utils $(AIROHA_USB_STORAGE_PACKAGES)
   DEVICE_PACKAGES += fitblk
 endef
@@ -359,7 +376,8 @@ define Device/h3c_hm2004-du
 	 kmod-phy-airoha-en8811h kmod-airoha-en7572 kmod-airoha-xpon \
 	 airoha-ponctl airoha-pond \
 	 kmod-mt7915e kmod-mt7916-firmware wpad-openssl \
-	 fitblk nand-utils ubi-utils $(AIROHA_USB_STORAGE_PACKAGES)
+	 fitblk nand-utils ubi-utils $(AIROHA_USB_STORAGE_PACKAGES) \
+	 $(AIROHA_WIFI_PACKAGES)
 endef
 TARGET_DEVICES += h3c_hm2004-du
 
