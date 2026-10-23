@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=default-settings
-PKG_RELEASE:=29
+PKG_RELEASE:=30
 
 PKG_LICENSE:=GPL-2.0-only
 
@@ -37,6 +37,9 @@ endef
 define Package/default-settings-chn/install
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/99-default-settings-chinese $(1)/etc/uci-defaults/
+
+	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
+	po2lmo ./i18n/default.zh_Hans.po $(1)/usr/lib/lua/luci/i18n/default.zh-cn.lmo
 endef
 
 $(eval $(call BuildPackage,default-settings))

@@ -1,0 +1,11 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: zh_Hans\n"
+
+# LuCI menu title of the \"admin/nas\" page. Restores the label the Chinese
+# default-settings package used to install before it was dropped as a
+# \"legacy translation\" in 2024; without it the fourth top-level menu falls
+# back to the untranslated English \"NAS\".
+msgid "NAS"
+msgstr "网络存储"
