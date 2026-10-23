@@ -1081,7 +1081,8 @@ git fetch origin && git merge origin/master     # 同步上游
 | 命令 | 作用 |
 |---|---|
 | `./build.sh` | **默认：完全沿用现有 `.config`，绝不修改它** —— 配置已经调好、只想增量编译时用这个 |
-| `./build.sh --config=an7581` | 用 `configs/an7581.config` + `configs/release.config` 重建 `.config`（带备份与掉包保护，见 §5.3.3 的 ① ②） |
+| `./build.sh --config=an7581` | 用 `configs/an7581.config` + `configs/release.config` 重建 `.config`（**先做种子完整度自检**；带备份与掉包保护，见 §5.3.3 的 ① ②） |
+| `./build.sh --check-seeds` | 只检查两个 `configs/*.config` 是否仍是完整发布种子（>=400 个包、关键包齐全、硬件包不串），不编译。见 [docs/config-seed-drift.md](docs/config-seed-drift.md) |
 | `JOBS=2 ./build.sh` | 降低并行度（内存紧张时避免被 OOM 击杀） |
 | `./build.sh --watch` | **只做进度监视，不编译**（等价于直接跑 `./build-watch.sh`） |
 | `./build.sh --force` | 忽略并发锁（**危险**，确认没有别的构建在跑再用） |
@@ -1097,8 +1098,8 @@ git fetch origin && git merge origin/master     # 同步上游
 | # | 阶段 | 做什么 | 为什么 |
 |---|---|---|---|
 | ⓪ | 环境自检 | `git` 用不了、或 `scripts/getver.sh` 给出 `unknown` → **当场停下**并打印修法（§5.1.1） | 缺 git 不会报错，只会静默走样：补丁判定全失败（误报"套不上"）+ 包版本整棵树换一套（随机包 `failed to build`）。宁可 0 秒失败，也不要 20 分钟后炸在无关的包上 |
-| ① | 套配置 | 只有给 `--config=<档>` 时才动 `.config`：先备份成 `.config.bak-ponwrt-<时间戳>`，再 `cat configs/<档>.config configs/release.config > .config` + `make defconfig` | 让"用种子配置重建"这件事可回退 |
-| ② | 掉包保护 | 对比 `CONFIG_PACKAGE_*=y` 的数量，若从 N 掉到 **< N×0.8** 就**中止并把备份还原** | 一次误操作就能把手调的配置覆盖掉；打印 `包选择数量: before -> after` 让你看见变化 |
+| ① | 套配置 | 只有给 `--config=<档>` 时才动 `.config`：**先跑 `scripts/check-config-seeds.sh`**（两个种子 >=400 个包、关键包齐全、7581/7583 硬件包不串；不过就中止且不碰 `.config`），再备份成 `.config.bak-ponwrt-<时间戳>`，`cat configs/<档>.config configs/release.config > .config` + `make defconfig` | 旧版只做后置比例保护，防不住"种子本身就缩水"：`configs/an7583.config` 曾经只剩 275 个包却照样通过 275×0.8，`--config=an7583` 编出缺一半应用的镜像。复盘见 [docs/config-seed-drift.md](docs/config-seed-drift.md) |
+| ② | 掉包保护 | 对比 `CONFIG_PACKAGE_*=y` 的数量，若从 N 掉到 **< N×0.8**，或 **defconfig 后低于绝对下限 400**，就**中止并把备份还原** | 一次误操作就能把手调的配置覆盖掉；打印 `包选择数量: before -> after` 让你看见变化 |
 | ③ | 套 feed 补丁 | 跑一遍 `feed-patches/apply.sh`（幂等，§5.2.1） | `feeds/` 不入库，改在上游驱动里的修复靠补丁落地；刚套上的会清掉 `build_dir` 旧拷贝，保证增量编译用的是改过的源码。**裸 `make` 也会做这一步**（`include/toplevel.mk` 的 `feed-patches-apply`），所以"直接 `make`"不会静默漏掉修复 |
 | ④ | 并发锁 | `tmp/build.lock`：锁在 **6 小时内** → 中止并打印锁里的 pid/时间；**过期锁** → 忽略继续 | 同一棵树并发 `make` 会同时写 `build_dir/` 与 `staging_dir/`，症状是 libunistring/perl 这类毫不相干的包"随机"失败，极难排查 |
 | ⑤ | 编译 | `make -j$JOBS`，**原始输出全部进 `tmp/build.log`** | 控制台留给进度块，细节随时可查 |
@@ -1489,6 +1490,8 @@ docs/an7583-eip93-probe-test.c                 EIP-93 只读寄存器探针模�
 docs/xg-040g-mf-an7583-2p5g-fix.md             XG-040G-MF 2.5G 口三个症状的完整排查记录
 docs/xg-040g-tx-power-ddmi.md                  XG-040G-MD 发射功率 -40 dBm：EN7572 BOB
                                               A0/A2 标定表与「模式挑了没标定的那张」
+docs/ung00a-tx-power-tssi.md                   UNG00A 发射功率 -40 dBm：A0 只标定模拟段、
+                                              TSSI 在 A2（0001 删回退造成的回归）
 feed-patches/apply.sh                         上游 feed 补丁（幂等）套用脚本：--check 只看状态、
                                               --reset 复位后重套；区分「git 用不了」与
                                               「补丁真冲突」两种报错。build.sh 与顶层 make 都调
@@ -1498,6 +1501,7 @@ feed-patches/pon_drivers/airoha-xpon/
     0001-*.patch                               EPON 上 pon0-online 触发器不再死灯
 feed-patches/pon_drivers/airoha-pon-frontends/
     0001-*.patch                               模式改从已标定的 BOB 表取模拟参数（-40 dBm）
+    0002-*.patch                               恢复 A0←A2 的 TSSI 回退（UNG00A 的 -40 回归）
 target/linux/airoha/base-files/usr/libexec/
     pon-internet-led                           「上网」灯 = 主动探测互联网（通=常亮、连续失败=灭）
 target/linux/airoha/base-files/etc/init.d/
