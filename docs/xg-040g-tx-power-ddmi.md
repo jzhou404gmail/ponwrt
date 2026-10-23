@@ -168,6 +168,10 @@ sh /tmp/pon-txpwr-probe.sh restore   # 写回擦除值（=老固件行为）
 sh /tmp/pon-txpwr-probe.sh           # 再写回 A2 标定值
 ```
 
+> 另一种 -40：UNG00A 的 A0 页模拟标定有效、只有 TSSI 被擦除，0001 把
+> A0←A2 的 TSSI 回退当死代码删掉后回归。见
+> [`docs/ung00a-tx-power-tssi.md`](ung00a-tx-power-tssi.md)。
+
 ## 六、编译环境备注（只影响在受限沙箱里出镜像）
 
 本机沙箱里 `./build.sh` 会停在 `package/install`：
