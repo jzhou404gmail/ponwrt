@@ -1,0 +1,100 @@
+diff --git a/luci-app-iptv/htdocs/luci-static/resources/view/iptv/config.js b/luci-app-iptv/htdocs/luci-static/resources/view/iptv/config.js
+index 278c5d8..be72f1e 100644
+--- a/luci-app-iptv/htdocs/luci-static/resources/view/iptv/config.js
++++ b/luci-app-iptv/htdocs/luci-static/resources/view/iptv/config.js
+@@ -85,6 +85,13 @@ return view.extend({
+ 		o.rmempty = true;
+ 		o.depends('enabled', '1');
+ 
++		o = s.option(form.Value, 'iptv_ip', _('IPTV interface address'),
++			_('Local address on br-iptv used as the IGMP and udpxy source. It must match udpxy\'s source option.'));
++		o.default = '172.16.200.1';
++		o.datatype = 'ip4addr';
++		o.rmempty = false;
++		o.depends('enabled', '1');
++
+ 		return m.render();
+ 	}
+ });
+diff --git a/luci-app-iptv/po/zh_Hans/iptv.po b/luci-app-iptv/po/zh_Hans/iptv.po
+index f63e7b6..861ba44 100644
+--- a/luci-app-iptv/po/zh_Hans/iptv.po
++++ b/luci-app-iptv/po/zh_Hans/iptv.po
+@@ -57,3 +57,9 @@ msgstr "可选。留空时使用组播 VLAN；未设置独立组播 VLAN 时使
+ 
+ msgid "Same as multicast traffic"
+ msgstr "与组播流量相同"
++
++msgid "IPTV interface address"
++msgstr "IPTV 接口地址"
++
++msgid "Local address on br-iptv used as the IGMP and udpxy source. It must match udpxy's source option."
++msgstr "br-iptv 上的本地地址，用作 IGMP 与 udpxy 的源地址；必须与 udpxy 的 source 选项一致。"
+diff --git a/luci-app-iptv/root/etc/config/iptv b/luci-app-iptv/root/etc/config/iptv
+index 24b99c9..da6fc15 100644
+--- a/luci-app-iptv/root/etc/config/iptv
++++ b/luci-app-iptv/root/etc/config/iptv
+@@ -5,3 +5,4 @@ config iptv 'config'
+ 	option service_vlan ''
+ 	option multicast_vlan ''
+ 	option igmp_vlan ''
++	option iptv_ip '172.16.200.1'
+diff --git a/luci-app-iptv/root/usr/libexec/iptv-apply b/luci-app-iptv/root/usr/libexec/iptv-apply
+index 59c53f2..a1d1838 100755
+--- a/luci-app-iptv/root/usr/libexec/iptv-apply
++++ b/luci-app-iptv/root/usr/libexec/iptv-apply
+@@ -35,6 +35,23 @@ validate_vlan() {
+ 	[ "$vid" -ge 1 ] && [ "$vid" -le 4094 ]
+ }
+ 
++validate_ipv4() {
++	local ip="$1"
++	local octet
++	local IFS=.
++
++	set -- $ip
++	[ $# -eq 4 ] || return 1
++
++	for octet in "$@"; do
++		case "$octet" in
++			''|*[!0-9]*) return 1 ;;
++		esac
++		[ "${#octet}" -le 3 ] || return 1
++		[ "$octet" -le 255 ] || return 1
++	done
++}
++
+ load_iptv_config() {
+ 	config_load iptv
+ 	config_get_bool ENABLED config enabled 0
+@@ -43,6 +60,7 @@ load_iptv_config() {
+ 	config_get SERVICE_VLAN config service_vlan
+ 	config_get MULTICAST_VLAN config multicast_vlan
+ 	config_get IGMP_VLAN config igmp_vlan
++	config_get IPTV_IP config iptv_ip 172.16.200.1
+ }
+ 
+ find_br_lan() {
+@@ -116,6 +134,7 @@ validate_config() {
+ 		[ "$MULTICAST_VLAN" != "$SERVICE_VLAN" ] || fail "Leave the multicast VLAN empty when it matches the service VLAN"
+ 	fi
+ 	[ -z "$IGMP_VLAN" ] || validate_vlan "$IGMP_VLAN" || fail "IGMP upstream VLAN must be between 1 and 4094"
++	validate_ipv4 "$IPTV_IP" || fail "IPTV interface address must be an IPv4 address"
+ 
+ 	[ -e "/sys/class/net/$LAN_PORT" ] || fail "LAN port $LAN_PORT was not found"
+ 	[ -e "/sys/class/net/$UPLINK" ] || fail "Uplink device $UPLINK was not found"
+@@ -266,7 +285,13 @@ write_network_config() {
+ 		[ "$IGMP_PORT" = 'ct-iptv-igmp' ] && uci add_list network.luci_iptv_bridge.ports='ct-iptv-igmp'
+ 
+ 		uci set network.luci_iptv='interface'
+-		uci set network.luci_iptv.proto='none'
++		# br-iptv needs a local address: udpxy/omcproxy source their IGMP
++		# joins from it, and IP_ADD_MEMBERSHIP fails with ENODEV when the
++		# configured -m address does not exist on any interface. The address
++		# is only an anchor on the IPTV L2 segment; the bridge is not routed.
++		uci set network.luci_iptv.proto='static'
++		uci set network.luci_iptv.ipaddr="$IPTV_IP"
++		uci set network.luci_iptv.netmask='255.255.255.0'
+ 		uci set network.luci_iptv.device='br-iptv'
+ 		uci set network.luci_iptv.auto='1'
+ 		uci set network.luci_iptv.delegate='0'
