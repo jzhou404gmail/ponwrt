@@ -1,0 +1,75 @@
+Restore the TX DDMI fallback for partially calibrated BOB profiles
+
+0001 removed en7572_apply_tx_ddmi_fallback() because the Nokia XG-040G-MD
+never used it once the whole profile came from A2.  The Unionman UNG00A
+does use it: its 10G EPON A0 page passes en7572_bob_table_valid() because
+the analog calibration at 0x80..0xd7 is programmed, but the TSSI words at
+0xb4..0xb7 are erased, while the A2 page has them.  MD32 then reports TX
+power word 0x0001 (0.1 uW, -40.00 dBm) with a perfectly normal bias
+current, and 0001's en7572_calibrated_base() cannot help because A0 is
+"valid".
+
+The TSSI calibration is per module, not per wavelength, so copy the four
+programmed bytes into the empty slot before the BOB is loaded into DM and
+before prepare() writes them to the runtime register.  This is the same
+behaviour the driver had before 0001; it is not dead code.
+
+Reproduced on UNG00A at 192.168.32.254: factory A0 TSSI was
+0xffffffff, A2 TSSI 0x69de9401, tx_power_dbm -40.00, tx_bias_ma 16.41
+and calibration: ready.  Writing the A2 words into runtime register
+0x00b4 made the TX power read 0x6adb (+4.4 dBm) without touching the
+laser bias, which pins the missing calibration as the only cause.
+
+diff --git a/airoha-pon-frontends/src/airoha-en7572.c b/airoha-pon-frontends/src/airoha-en7572.c
+--- a/airoha-pon-frontends/src/airoha-en7572.c
++++ b/airoha-pon-frontends/src/airoha-en7572.c
+@@ -153,6 +153,39 @@
+ 	return has_nonzero && has_non_ff;
+ }
+ 
++/*
++ * The TX DDMI (TSSI) calibration is a per-module measurement calibration, not a
++ * per-wavelength setting, but a board may have only one of the two BOB pages
++ * programmed with it.
++ *
++ * The Unionman UNG00A is such a board: its 10G EPON A0 page has the analog
++ * calibration (IMOD/IAV/APC/ERC/TIA/PGA) but leaves the four TSSI bytes at
++ * 0xb4..0xb7 erased, while A2 carries them. MD32 then reports the TX power
++ * floor (word 0x0001 => -40.00 dBm) even though the laser bias is perfectly
++ * normal. Borrow the programmed copy so the selected profile can report TX
++ * power. The Nokia XG-040G-MD needs the same when it runs from A2 with A0
++ * erased, so keep this independent of which profile prepare() selects.
++ */
++static void en7572_apply_tx_ddmi_fallback(struct device *dev, struct en7572 *en)
++{
++	u8 *a0 = en->bob + EN7572_BOB_A0_BASE;
++	const u8 *a2 = en->bob + EN7572_BOB_A2_BASE;
++	u32 a0_tssi = get_unaligned_le32(a0 + EN7572_BOB_TSSI_CAL_1);
++	u32 a2_tssi = get_unaligned_le32(a2 + EN7572_BOB_TSSI_CAL_1);
++
++	if (a0_tssi != U32_MAX)
++		return;
++
++	if (a2_tssi == U32_MAX) {
++		dev_warn(dev, "BOB TX DDMI calibration is erased in both profiles\n");
++		return;
++	}
++
++	memcpy(a0 + EN7572_BOB_TSSI_CAL_1, a2 + EN7572_BOB_TSSI_CAL_1,
++	       sizeof(a0_tssi));
++	dev_warn(dev, "BOB A0 TX DDMI is erased; using the A2 TSSI calibration\n");
++}
++
+ /* EN7572 reads use a big-endian 16-bit subaddress and repeated start. */
+ static int en7572_read(struct i2c_client *client, u16 reg, void *data,
+                        size_t len)
+@@ -404,6 +437,9 @@
+ 			dev,
+ 			"BOB A2 profile is erased; every mode runs from the calibrated A0 profile\n");
+ 
++	/* A profile can be analog-calibrated yet lack the TX DDMI words. */
++	en7572_apply_tx_ddmi_fallback(dev, en);
++
+ 	dev_info(dev, "BOB %s: A0=%s A2=%s\n",
+ 	         loaded ? "loaded from NVMEM" : "using erased fallback",
+ 	         en->bob_a0_valid ? "valid" : "empty",
