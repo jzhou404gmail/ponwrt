@@ -68,6 +68,14 @@ config interface 'luci_iptv'
 	option delegate '0'
 ```
 
+> **2026-10-21 起**：上面 `luci_iptv` 的 `proto/ipaddr/netmask` 由 `luci-app-iptv`
+> 的 `iptv-apply` 自动生成，地址取 `/etc/config/iptv` 的 `option iptv_ip`
+> （默认 `172.16.200.1/24`）。不需要再手写这段；要换地址只改 `iptv_ip`，并让
+> udpxy 的 `source` 跟着改（见第 2 节）。这个地址是 `br-iptv` 上唯一的本地地址，
+> 没有它 udpxy 的 `-m 172.16.200.1` 会以 `ENODEV` 失败 —— 状态页正常，但所有
+> `/udp/...` 请求返回 500，日志是
+> `set_multicast: setsockopt MCAST option: ADD: No such device`。
+
 > `igmp_snooping '0'` 很关键：关闭后组播在桥内全端口广播，udpxy/omcproxy 一定能收到。
 
 ### ★★ 必做：组播 VLAN 端口必须关闭 MAC 学习（否则机顶盒报 2001 网络不可达）
@@ -154,6 +162,10 @@ uci commit udpxy
 /etc/init.d/udpxy enable
 /etc/init.d/udpxy restart
 ```
+
+> `source` 必须等于 `uci get iptv.config.iptv_ip`（默认 `172.16.200.1`）。
+> 该地址由 `iptv-apply` 配在 `br-iptv` 上；接口没有地址时 udpxy 日志报
+> `set_multicast: setsockopt MCAST option: ADD: No such device`，所有流请求 500。
 
 验证：
 ```sh
