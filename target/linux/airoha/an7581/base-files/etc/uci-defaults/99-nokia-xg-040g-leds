@@ -1,0 +1,92 @@
+#!/bin/sh
+#
+# Add the Nokia XG-040G panel LAN LED bindings on keep-config upgrades.
+#
+# board.d/01_leds writes /etc/board.json, and the part of /bin/config_generate
+# that turns board.json into UCI - generate_led included - only runs when
+# /etc/config/system is missing or empty. A sysupgrade that keeps settings has
+# a non-empty system config, so it keeps whatever LED sections the old image
+# wrote, while board.json itself is regenerated every boot (it is not in the
+# keep list). The result is a correct board.json next to a stale UCI config.
+#
+# lan1 is the one that gets lost: air_leds_init() switches the EN8811H 2.5G PHY
+# to user-defined LED mode, and only a bound netdev trigger pushes the link
+# rules back, so a missing led_lan1 section means a dark 2.5G jack even though
+# the port links at 2.5 Gbps. lan2..lan4 are added too, for installs old enough
+# to predate the whole board.d case.
+#
+# Idempotent and narrow: a binding is only added when the LED class device
+# exists and no section already targets it, and an existing led_lanN section is
+# never taken over (the _md suffix is used instead). On a fresh install, where
+# config_generate wrote both files together, nothing happens.
+
+. /lib/functions.sh
+
+# Same order and class devices as the nokia,xg-040g-md-ubi case in 01_leds:
+# section|name|class device|netdev
+XG_040G_LEDS="
+led_lan1|lan1|mt7530-0:0f:green:lan-1|lan1
+led_lan2|lan2|mt7530-0:0a:green:lan-2|lan2
+led_lan3|lan3|mt7530-0:0b:green:lan-3|lan3
+led_lan4|lan4|mt7530-0:0c:green:lan-4|lan4
+"
+
+_led_sections() {
+	uci -q show system | sed -n 's/^system\.\([^=]*\)=led$/\1/p'
+}
+
+_led_is_bound() {
+	local want="$1" s
+
+	for s in $(_led_sections); do
+		[ "$(uci -q get "system.$s.sysfs")" = "$want" ] && return 0
+	done
+
+	return 1
+}
+
+# Echo a free section name derived from $1, or return 1 if both candidates are
+# taken - never take over a section that already exists under that name.
+_led_section_new() {
+	local s
+
+	for s in "$1" "${1}_md"; do
+		[ -z "$(uci -q get "system.$s")" ] && {
+			echo "$s"
+			return 0
+		}
+	done
+
+	return 1
+}
+
+case "$(board_name)" in
+nokia,xg-040g-md-ubi|nokia,xg-040g-tf-ubi)
+	echo "$XG_040G_LEDS" | while IFS='|' read -r section name class dev; do
+		[ -n "$section" ] || continue
+		[ -e "/sys/class/leds/$class" ] || continue
+		_led_is_bound "$class" && continue
+		section="$(_led_section_new "$section")" || continue
+
+		uci -q set "system.$section=led"
+		uci -q set "system.$section.name=$name"
+		uci -q set "system.$section.sysfs=$class"
+		uci -q set "system.$section.trigger=netdev"
+		uci -q set "system.$section.mode=link tx rx"
+		uci -q set "system.$section.dev=$dev"
+
+		logger -t xg-040g-leds "added the ${name} LED binding"
+	done
+
+	# Commit explicitly and fail the script if it does not stick. A plain
+	# uci set only lands in /tmp/.uci, and the runner deletes this script
+	# after a successful exit - so a commit that silently does nothing would
+	# lose the bindings at the next reboot with no retry.
+	uci commit system || {
+		logger -t xg-040g-leds "cannot commit the LED bindings"
+		exit 1
+	}
+	;;
+esac
+
+exit 0

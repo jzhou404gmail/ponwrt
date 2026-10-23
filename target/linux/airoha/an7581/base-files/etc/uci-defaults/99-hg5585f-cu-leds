@@ -83,7 +83,8 @@ fiberhome,hg5585f-cu)
 	migrate_leds "mt7530-0:09:green:lan-1=blue:lan-1" \
 		     "mt7530-0:0a:green:lan-2=blue:lan-2" \
 		     "mt7530-0:0b:green:lan-3=blue:lan-3" \
-		     "mt7530-0:0c:green:lan-4=blue:lan-4"
+		     "mt7530-0:0c:green:lan-4=blue:lan-4" \
+		     "mt7530-0:0f:green:lan-1=blue:lan-1"
 
 	echo "$CU_LEDS" | while IFS='|' read -r section name class type args; do
 		[ -n "$section" ] || continue
