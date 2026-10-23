@@ -1,0 +1,188 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# led-sync - keep the panel LED bindings in step with the board definition
+#
+# /etc/board.json is produced from this image's board.d/01_leds, so it always
+# describes the panel of the machine the firmware boots on. /etc/config/system
+# is not: it survives upgrades and is exactly what a backup/restore carries.
+# Restoring a config taken from another board therefore leaves system.led_*
+# naming class devices that do not exist here - e.g. mt7530-0:0a:green:lan-2 on
+# a panel whose LEDs are blue:lan-N - and the panel stays dark without a single
+# error in the log, because leds-gpio registers the LEDs but nothing binds a
+# trigger to them.
+#
+# This service re-applies the board's own bindings on every boot, ahead of
+# /etc/init.d/led (START=96), so one backup can be restored on a mixed fleet.
+# Rules:
+#   * a section the board describes is rewritten to match board.json; if it
+#     carries another board's class device it is replaced whole, so no foreign
+#     options leak in;
+#   * a board LED is always written, even if its class device is not up yet
+#     (a phy LED created later by a driver) - the binding waits for it, just
+#     like config_generate does on a fresh install;
+#   * sections the board does not describe are left alone, except stale ones
+#     whose class device does not exist at all, which are dropped.
+#
+# Opt out with: uci set system.@system[-1].led_sync=0
+
+START=95
+
+changed=0
+
+_led_want() {
+	local cfg="$1"
+	local opt="$2"
+	local val="$3"
+
+	[ "$(uci -q get "system.$cfg.$opt")" = "$val" ] && return 0
+	uci -q set "system.$cfg.$opt=$val"
+	changed=1
+}
+
+_led_ports() {
+	local cfg="$1"
+	local want="$2"
+	local cur p
+
+	cur="$(uci -q get "system.$cfg.port")"
+	[ "$cur" = "$want" ] && return 0
+
+	uci -q delete "system.$cfg.port"
+	for p in $want; do
+		uci -q add_list "system.$cfg.port=$p"
+	done
+	changed=1
+}
+
+_led_one() {
+	local key="$1"
+	local cfg="led_$key"
+	local name sysfs type trigger default device mode gpio inverted ports
+	local iface minq maxq offset factor port_mask speed_mask port_state delayon delayoff
+
+	json_select "$key" || return 0
+	json_get_vars name sysfs type trigger default device mode gpio inverted \
+		iface minq maxq offset factor port_mask speed_mask port_state \
+		delayon delayoff
+	json_get_values ports ports
+	json_select ..
+
+	[ -n "$sysfs" ] || return 0
+
+	if [ "$(uci -q get "system.$cfg.sysfs")" != "$sysfs" ]; then
+		uci -q delete "system.$cfg"
+		changed=1
+	fi
+
+	[ "$(uci -q get "system.$cfg")" = "led" ] || {
+		uci -q set "system.$cfg=led"
+		changed=1
+	}
+
+	_led_want "$cfg" sysfs "$sysfs"
+	[ -n "$name" ] && _led_want "$cfg" name "$name"
+
+	case "$type" in
+	gpio)
+		_led_want "$cfg" trigger gpio
+		_led_want "$cfg" gpio "$gpio"
+		_led_want "$cfg" inverted "$inverted"
+		;;
+	netdev)
+		_led_want "$cfg" trigger netdev
+		_led_want "$cfg" mode "$mode"
+		_led_want "$cfg" dev "$device"
+		;;
+	usb)
+		_led_want "$cfg" trigger usbdev
+		_led_want "$cfg" interval 50
+		_led_want "$cfg" dev "$device"
+		;;
+	usbport)
+		_led_want "$cfg" trigger usbport
+		_led_ports "$cfg" "$ports"
+		;;
+	rssi)
+		_led_want "$cfg" trigger rssi
+		_led_want "$cfg" iface "rssid_$iface"
+		_led_want "$cfg" minq "$minq"
+		_led_want "$cfg" maxq "$maxq"
+		_led_want "$cfg" offset "$offset"
+		_led_want "$cfg" factor "$factor"
+		;;
+	switch)
+		_led_want "$cfg" trigger "$trigger"
+		_led_want "$cfg" port_mask "$port_mask"
+		_led_want "$cfg" speed_mask "$speed_mask"
+		_led_want "$cfg" mode "$mode"
+		;;
+	portstate)
+		_led_want "$cfg" trigger "$trigger"
+		_led_want "$cfg" port_state "$port_state"
+		;;
+	timer|oneshot)
+		_led_want "$cfg" trigger "$type"
+		_led_want "$cfg" delayon "$delayon"
+		_led_want "$cfg" delayoff "$delayoff"
+		;;
+	*)
+		_led_want "$cfg" trigger "$trigger"
+		;;
+	esac
+
+	_led_want "$cfg" default "$default"
+}
+
+_led_prune() {
+	local keys="$1"
+	local s sysfs
+
+	for s in $(uci show system 2>/dev/null | sed -n 's/^system\.\([^=]*\)=led$/\1/p'); do
+		sysfs="$(uci -q get "system.$s.sysfs")"
+		[ -n "$sysfs" ] || continue
+		[ -e "/sys/class/leds/$sysfs" ] && continue
+
+		# Still described by the board: the driver may simply not have
+		# registered it yet, leave it for a later boot.
+		case " $keys " in
+		*" ${s#led_} "*) continue ;;
+		esac
+
+		uci -q delete "system.$s"
+		logger -t led-sync "dropped stale LED section '$s' (no /sys/class/leds/$sysfs)"
+		changed=1
+	done
+}
+
+start() {
+	[ "$(uci -q get system.@system[-1].led_sync)" = "0" ] && return 0
+
+	# BOARD_JSON is a test hook, production always reads /etc/board.json
+	local board="${BOARD_JSON:-/etc/board.json}"
+	[ -s "$board" ] || return 0
+
+	. /usr/share/libubox/jshn.sh
+	json_load "$(cat "$board")" || return 0
+	json_get_keys keys led
+
+	if [ -n "$keys" ]; then
+		json_select led
+		local key
+		for key in $keys; do
+			_led_one "$key"
+		done
+		json_select ..
+	fi
+
+	# Always prune: a board that defines no LEDs in board.json (its panel is
+	# driven by a userspace script or by the DTS default-state) must still lose
+	# the dead sections a foreign backup drags in.
+	_led_prune "$keys"
+
+	[ "$changed" = 1 ] || return 0
+
+	uci commit system
+	logger -t led-sync "panel LED bindings aligned with /etc/board.json"
+	[ -x /etc/init.d/led ] && /etc/init.d/led restart >/dev/null 2>&1
+}
