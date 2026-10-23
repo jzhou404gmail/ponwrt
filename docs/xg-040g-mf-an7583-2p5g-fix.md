@@ -167,6 +167,12 @@ uci commit system && /etc/init.d/led restart
 所以 RPC 里 `gdm_netdev 4` 在 AN7583 上必然取空，前端 `gdmCards()` 又把空卡片过滤掉
 ⇒ 页面看起来「没有 2.5G 口」，实际是查询的 GDM 号错了。
 
+> **2026-10-21 回滚到 SOC 2.0.0 后的适配**：1.x 的 `gdm_copper` 字段随 RPC 重写被
+> 移除，2.0.0 的 `get_frame_engine` 又只列 GDM1/2/4，AN7583 的 2.5G（GDM3）会再次
+> 消失。现在 RPC 按厂商 FE 寄存器表补上 GDM3 计数块 `0x1fb51200`，前端仍按
+> device-tree topology 过滤：AN7583 显示 GDM3，AN7581 显示 GDM4。下面 1.x 的
+> `gdm_copper` 修复记录作为历史保留。
+
 ### 修复
 
 * `root/usr/libexec/rpcd/luci.airoha_npu`：
@@ -226,8 +232,9 @@ cat /sys/class/leds/1fb00000.system-controller:mdio-bus@c8-mii:0f:green:lan-1/tr
 #    期望 [netdev]，同目录有 device_name / link / link_2500 / tx / rx
 
 # 4. SOC 状态页
-ubus call luci.airoha_npu getFrameEngine | tr "," "\n" | grep -A2 gdm_copper
-#    期望 index=3，netdev=lan1，speed=2.5G，link 跟随插拔
+#    2.0.0 的 RPC 输出 gdm 数组，AN7583 上应出现 reg=3（2.5G LAN1）：
+ubus call luci.airoha_npu getFrameEngine | tr "," "\n" | grep -A4 '"reg":3'
+#    1.x 旧字段（历史）：grep -A2 gdm_copper，期望 index=3、netdev=lan1、speed=2.5G
 ```
 
 ## 五、编译环境备注（只影响在沙箱/受限环境里编译）

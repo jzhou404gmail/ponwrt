@@ -599,8 +599,15 @@ get_frame_engine() {
 	# GDM register blocks, keyed by the device-tree ethernet@N index so the
 	# frontend can label each card from the same topology the port table uses.
 	# A port that fails to decode is skipped, not fatal.
+	#
+	# Count-block bases from the vendor FE register map: GDMA1 +0x600,
+	# GDMA2 +0x1600, GDMA3 +0x1200, GDMA4 +0x2600. Read all four: GDM3 is the
+	# 2.5G copper port on AN7583 (there is no GDM4 there), while AN7581 has
+	# GDM4 for lan1 and no GDM3 data MAC. The frontend already drops any card
+	# whose reg has no entry in the device-tree topology, so one list serves
+	# both SoCs.
 	gdm=""
-	for spec in "1:0x1fb50600" "2:0x1fb51600" "4:0x1fb52600"; do
+	for spec in "1:0x1fb50600" "2:0x1fb51600" "3:0x1fb51200" "4:0x1fb52600"; do
 		reg="${spec%%:*}"
 		base="${spec##*:}"
 		entry=$(_gdm_json "$reg" "$base") || continue

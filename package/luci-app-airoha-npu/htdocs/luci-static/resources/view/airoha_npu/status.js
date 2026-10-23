@@ -810,11 +810,14 @@ function renderWifiDetails(wifi, ppe, ti, st) {
  * The GDM data MACs and the CDM DMA engines have no debugfs node, so the
  * backend reads their counters straight from the frame-engine registers.
  * Those addresses belong to the SoC, not the board, so the same
- * GDM1/GDM2/GDM4 and CDM1/CDM2 set decodes on both boards this app ships to:
+ * GDM1..GDM4 and CDM1/CDM2 blocks decode on every board this app ships to.
+ * The frontend then keeps only the GDMs present in the device-tree topology:
  * the XR1710G (WiFi router: switch CPU port, USXGMII WAN, USXGMII LAN2) and
- * the Nokia XG-040G-MD (PON ONU: switch CPU port, PON uplink, lan1). Only the
- * port *names* differ, and those come from the device-tree topology, exactly
- * like the Ethernet-ports table, so each card labels itself per board.
+ * the Nokia XG-040G-MD (AN7581 PON ONU: switch CPU port, PON uplink, lan1 =
+ * GDM4) expose GDM1/GDM2/GDM4, while the XG-040G-MF (AN7583) has no GDM4 and
+ * puts its 2.5G lan1 on GDM3. Only the port *names* differ, and those come
+ * from the device-tree topology, exactly like the Ethernet-ports table, so
+ * each card labels itself per board.
  *
  * The counters are free-running 32-bit registers: they wrap and reset only on
  * reboot, so they are shown as plain totals, never as rates. */
