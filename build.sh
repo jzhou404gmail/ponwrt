@@ -10,7 +10,8 @@
 # 用法：
 #   ./build.sh                    # 默认：完全沿用现有 .config，绝不修改它
 #   ./build.sh --config=an7581    # 显式用 configs/an7581.config 重建 .config
-#                                 # （会先自动备份 + 掉包保护，缩水超 20% 自动中止还原）
+#                                 # （先做种子完整度自检；再备份 + 掉包保护，缩水超 20% 或低于 400 包自动中止还原）
+#   ./build.sh --check-seeds      # 只检查两个 configs/*.config 是否仍是完整发布种子，不编译
 #   JOBS=2 ./build.sh             # 降并行（内存紧张时避免 OOM）
 #   ./build.sh --watch            # 只做进度监视，不编译
 #   ./build.sh --force            # 忽略并发保护（危险，确认没有别的构建再用）
@@ -32,11 +33,13 @@ START_TIME=$(date '+%F %T')
 CONFIG_NAME=""
 WATCH_ONLY=0
 FORCE=0
+CHECK_SEEDS=0
 for arg in "$@"; do
 	case "$arg" in
 		--config=*) CONFIG_NAME="${arg#--config=}" ;;
 		--watch)    WATCH_ONLY=1 ;;
 		--force)    FORCE=1 ;;
+		--check-seeds) CHECK_SEEDS=1 ;;
 		-h|--help)
 			sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'
 			exit 0 ;;
@@ -48,6 +51,16 @@ for arg in "$@"; do
 done
 
 LOG="tmp/build.log"
+
+# 发布种子的包数下限：两个 configs/*.config 都必须带完整应用集。
+# 低于这个数就说明种子又退化成早期最小基线了 —— 这正是 an7583 曾经只剩
+# 275 个包、而 7581 实际 454 个包的那次事故。可用环境变量临时放宽以便
+# 排查，但正式编译请保持默认值。
+MIN_SEED_PACKAGES="${MIN_SEED_PACKAGES:-400}"
+
+if [ "$CHECK_SEEDS" = 1 ]; then
+	exec env MIN_PACKAGES="$MIN_SEED_PACKAGES" ./scripts/check-config-seeds.sh
+fi
 
 # ---------- 耗时显示 ----------
 fmt_duration() {
@@ -102,6 +115,17 @@ if [ -n "$CONFIG_NAME" ]; then
 		exit 1
 	fi
 
+	# 先查种子本身，再动 .config。旧的比例保护只防"defconfig 把这次种子
+	# 缩水"，防不住"种子本来就是缩水的"：275 个包相对 275 个种子永远
+	# 通过 80% 检查。绝对下限和两个种子之间的差异白名单才兜得住。
+	if [ -x scripts/check-config-seeds.sh ]; then
+		echo "==> 配置种子自检（两个 target 都必须 >= ${MIN_SEED_PACKAGES} 个 =y 包）"
+		if ! MIN_PACKAGES="$MIN_SEED_PACKAGES" ./scripts/check-config-seeds.sh; then
+			echo "!! 种子自检未通过：没有改动 .config，已中止。" >&2
+			exit 1
+		fi
+	fi
+
 	BAK=".config.bak-ponwrt-$(date +%Y%m%d-%H%M%S)"
 	if [ -f .config ]; then
 		cp -a .config "$BAK"
@@ -125,14 +149,25 @@ if [ -n "$CONFIG_NAME" ]; then
 	after_pkgs=$(grep -c '^CONFIG_PACKAGE_.*=y' .config 2>/dev/null || true)
 	[ -n "$after_pkgs" ] || after_pkgs=0
 
-	if [ "$seed_before" -gt 0 ] && [ "$after_pkgs" -lt $((seed_before * 8 / 10)) ]; then
+	if [ "$seed_before" -gt 0 ] &&
+	   { [ "$after_pkgs" -lt $((seed_before * 8 / 10)) ] || [ "$after_pkgs" -lt "$MIN_SEED_PACKAGES" ]; }; then
 		echo "" >&2
-		echo "!! 已中止：本次种子有 ${seed_before} 个包，defconfig 后只剩 ${after_pkgs} 个，疑似种子被覆盖或不完整。" >&2
+		echo "!! 已中止：本次种子有 ${seed_before} 个包，defconfig 后只剩 ${after_pkgs} 个（下限 ${MIN_SEED_PACKAGES}），疑似种子被覆盖或不完整。" >&2
 		echo "!! 已把原配置还回去：${BAK} -> .config" >&2
 		cp -a "$BAK" .config
 		exit 1
 	fi
 	echo "==> 包选择数量: 当前 ${before_pkgs}；种子 ${seed_before} -> defconfig 后 ${after_pkgs}"
+else
+	# 普通 ./build.sh 用本机 .config：这里只警告，不拦截 —— 用户可能确实
+	# 在做一个精简配置。但发布种子的下限仍然提醒出来，避免又出现"以为在
+	# 编完整固件、实际只有 275 个包"。
+	now_pkgs=$(grep -c '^CONFIG_PACKAGE_.*=y' .config 2>/dev/null || true)
+	[ -n "$now_pkgs" ] || now_pkgs=0
+	if [ "$now_pkgs" -lt "$MIN_SEED_PACKAGES" ]; then
+		echo "!! 警告：当前 .config 只有 ${now_pkgs} 个 =y 包（发布种子下限 ${MIN_SEED_PACKAGES}）。" >&2
+		echo "!! 如果这不是你有意精简的配置，请用 ./build.sh --config=<target> 从种子重建。" >&2
+	fi
 fi
 
 if [ ! -f .config ]; then
