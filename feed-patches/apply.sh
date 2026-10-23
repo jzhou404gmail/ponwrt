@@ -218,3 +218,19 @@ for pkg in $changed_pkgs; do
 		rm -rf "$dir"
 	done
 done
+
+# LuCI 的翻译是独立的 luci-i18n-<app>-<lang> 包，install 阶段才用 po2lmo 从
+# 应用目录的 po/ 生成 .lmo，而它们的 build_dir 有自己的 .built 戳。只删
+# luci-app-<app>/ 的话，增量编译会继续用旧的 .lmo —— 补丁里新增的翻译永远
+# 进不了镜像。所以应用补丁后把对应翻译包的 build_dir 一起清掉。
+for pkg in $changed_pkgs; do
+	case "$pkg" in
+	luci-app-*)
+		for dir in build_dir/target-*/"luci-i18n-${pkg#luci-app-}"-*; do
+			[ -d "$dir" ] || continue
+			echo "==> 清理过期翻译目录: $dir（下次 make 会重新生成 .lmo）"
+			rm -rf "$dir"
+		done
+		;;
+	esac
+done
