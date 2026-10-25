@@ -122,8 +122,16 @@ set ${si}.ssid='${defaults?.ssid || "ImmortalWrt"}'
 set ${si}.encryption='${defaults?.encryption || encryption}'
 set ${si}.key='${defaults?.key || ""}'
 set ${si}.disabled='0'
-
 `);
+
+		/*
+		 * Boards whose WPS button must work out of the box set this in
+		 * board.json; hostapd only runs WPS when the interface asks for
+		 * it, so without the option the button is a no-op.
+		 */
+		if (board.wlan.defaults?.wps_pushbutton)
+			print(`set ${si}.wps_pushbutton='1'\n`);
+
 		config[name] = {};
 		commit = true;
 	}

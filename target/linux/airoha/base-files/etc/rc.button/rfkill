@@ -1,0 +1,48 @@
+#!/bin/sh
+#
+# PonWrt: 面板 WLAN 键是「运行时开关」，不写死进配置。
+#
+# 上游版本最后会 `uci commit wireless`，于是「用按键关掉 WiFi」会被写进
+# /etc/config/wireless，重启后 WiFi 仍然是关的。这三款 ONT 的面板键语义是
+# 「临时关一下」，所以这里只把 disabled 写进 uci 的**未提交增量**
+# (/tmp/.uci/wireless，重启即消失)，配置本体的真值仍是 /etc/config/wireless：
+#
+#   * 按键关 → radio 真的停、hostapd 停、WLAN 灯灭；本次运行内 `wifi up`
+#     / `wifi reload` 不会把它又打开（netifd 会读这份增量）
+#   * 重启 → /tmp 清空，回到 /etc/config/wireless 里的状态（默认开）
+#   * 想把当前状态钉死：`uci commit wireless`（或在 LuCI 里保存一次无线配置）
+#
+# 与上游的差异只有一处：删掉了 `uci commit wireless`。
+#
+[ "${ACTION}" = "released" -o -n "${TYPE}" ] || exit 0
+
+. /lib/functions.sh
+
+rfkill_state=0
+
+wifi_rfkill_set() {
+	# 先撤掉上一次的增量，避免 /tmp/.uci/wireless 里同一项堆好几行。
+	uci -q revert wireless.$1.disabled
+	uci set wireless.$1.disabled=$rfkill_state
+}
+
+wifi_rfkill_check() {
+	local disabled
+	config_get disabled $1 disabled
+	[ "$disabled" = "1" ] || rfkill_state=1
+}
+
+config_load wireless
+case "${TYPE}" in
+"switch")
+	[ "${ACTION}" = "released" ] && rfkill_state=1
+	;;
+*)
+	config_foreach wifi_rfkill_check wifi-device
+	;;
+esac
+config_foreach wifi_rfkill_set wifi-device
+# 故意不 commit：状态只活在 /tmp/.uci 里，重启自然回到配置里的值。
+wifi up
+
+return 0

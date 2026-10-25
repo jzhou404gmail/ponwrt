@@ -40,6 +40,18 @@ znxt,zn515xg-d)
 	#    密钥固定 12345678（8 位是 WPA-PSK 的下限），刷完请自己改掉。
 	ucidef_set_wireless 2g "ImmortalWrt" psk2 12345678
 	ucidef_set_wireless 5g "ImmortalWrt_5G" psk2 12345678
+
+	# 5) 物理 WPS 键。这三款的 WPS 键接在 GPIO4（KEY_WPS_BUTTON），由
+	#    /etc/rc.button/wps -> /etc/rc.wps/40-wps_ap 调 hostapd 的 wps_start。
+	#    hostapd 只有在 wifi-iface 带 wps_pushbutton=1 时才会启用 WPS，
+	#    否则 ubus 的 wps_start 直接失败，按键按下去毫无反应（曾经就是这样）。
+	#    这里只开 PBC（push_button），不开 PIN；生成的 radio 首次建配置时
+	#    会带上 wps_pushbutton=1。用户仍可在 LuCI 无线页把它取消。
+	json_select_object wlan
+		json_select_object defaults
+			json_add_boolean wps_pushbutton 1
+		json_select ..
+	json_select ..
 	;;
 esac
 
