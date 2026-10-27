@@ -28,6 +28,11 @@
 #   * the packages that must be present on each SoC (NPU firmware, 2.5G PHY,
 #     EIP-93/AES, PON/IPTV, the six release apps);
 #   * that hardware/WiFi packages of one target are not leaking into the other;
+#   * the exact set of device profiles that produce firmware: the six AN7581
+#     models the owner actually has (no SFP variants), and
+#     nokia_xg-040g-mf-ubi on AN7583.  Code changes still have to work for
+#     every profile of the SoC; this list only limits what gets built.
+#     See docs/build-models-policy.md.
 #   * cross-seed parity: any package present in only one seed must be in the
 #     explicit ONLY_7581 / ONLY_7583 hardware allowlists below.  This is what
 #     catches "someone deleted 40 ordinary packages from one seed" even when
@@ -106,6 +111,29 @@ trusted-firmware-a-an7583-bl31
 u-boot-an7583_nokia_xg-040g-mf
 "
 
+# ---------------------------------------------------------------------------
+# 出固件的机型白名单（2026-10-25 定，未来都适用）
+#
+# 改代码按 target 写，必须覆盖 AN7581 的全部 12 个 profile（含 SFP 变体）
+# 和 AN7583 的 XG-040G-MF；但出固件只出用户手上这几台，带 SFP 的变体和
+# 其它机型一律不选。要调整发布范围，先改这里和 configs/*.config，否则
+# build.sh 会在动手前直接拒绝编译。
+#
+#   7581：5382A / HG5585F-CT / HG5585F-CU / XG-040G-MD / UNG00A / ZN504XG-D
+#   7583：XG-040G-MF，且只出 UBI 固件（nokia_xg-040g-mf-ubi）
+# ---------------------------------------------------------------------------
+BUILD_7581_DEVICES="
+fiberhome_hg5382a
+fiberhome_hg5585f-ct
+fiberhome_hg5585f-cu
+nokia_xg-040g-md-ubi
+unionman_ung00a
+znxt_zn504xg-d
+"
+BUILD_7583_DEVICES="
+nokia_xg-040g-mf-ubi
+"
+
 check_common() {
 	seed="$1"
 	for p in \
@@ -134,6 +162,32 @@ check_count() {
 		err "$seed: CONFIG_TARGET_PER_DEVICE_ROOTFS is not y"
 }
 
+selected_devices() {
+	# $1 = target conf (airoha_an7581), $2 = seed file
+	grep '^CONFIG_TARGET_DEVICE_'"$1"'_DEVICE_.*=y$' "$2" |
+		sed 's/.*DEVICE_//; s/=y$//' | sort
+}
+
+check_build_devices() {
+	seed="$1"
+	target="$2"
+	allow="$3"
+	allowed="/tmp/ponwrt-build-allow.$$"
+	selected="/tmp/ponwrt-build-selected.$$"
+
+	printf '%s\n' $allow | sort > "$allowed"
+	selected_devices "$target" "$seed" > "$selected"
+
+	extra=$(comm -13 "$allowed" "$selected")
+	missing=$(comm -23 "$allowed" "$selected")
+	rm -f "$allowed" "$selected"
+
+	[ -z "$extra" ] || \
+		err "$seed: 多选了不该出固件的机型（规则见 docs/build-models-policy.md）：$(echo $extra)"
+	[ -z "$missing" ] || \
+		err "$seed: 缺少出固件的机型：$(echo $missing)"
+}
+
 check_7581() {
 	seed=configs/an7581.config
 	[ -f "$seed" ] || { err "$seed missing"; return; }
@@ -153,8 +207,7 @@ check_7581() {
 	for p in airoha-an7583-npu-firmware kmod-crypto-hw-eip93 kmod-cryptodev libopenssl-devcrypto; do
 		pkg_unset "$p" "$seed" || err "$seed: contains an7583-only CONFIG_PACKAGE_$p"
 	done
-	grep -q '^CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_.*=y$' "$seed" || \
-		err "$seed: no an7581 device selected"
+	check_build_devices "$seed" airoha_an7581 "$BUILD_7581_DEVICES"
 	if grep -q '^CONFIG_TARGET_DEVICE_airoha_an7583_DEVICE_.*=y$' "$seed"; then
 		err "$seed: selects an an7583 device"
 	fi
@@ -184,8 +237,7 @@ check_7583() {
 	do
 		pkg_unset "$p" "$seed" || err "$seed: contains radio/7581-only CONFIG_PACKAGE_$p"
 	done
-	grep -q '^CONFIG_TARGET_DEVICE_airoha_an7583_DEVICE_nokia_xg-040g-mf-ubi=y$' "$seed" || \
-		err "$seed: nokia_xg-040g-mf-ubi is not selected"
+	check_build_devices "$seed" airoha_an7583 "$BUILD_7583_DEVICES"
 	if grep -q '^CONFIG_TARGET_DEVICE_airoha_an7583_DEVICE_nokia_xg-040g-mf=y$' "$seed"; then
 		err "$seed: non-UBI nokia_xg-040g-mf is selected"
 	fi
@@ -242,4 +294,4 @@ if [ "$fail" -ne 0 ]; then
 	exit 1
 fi
 
-echo "==> 配置种子自检通过：两个种子均 >= ${MIN_PACKAGES} 个 =y 包，硬件差异仅限白名单"
+echo "==> 配置种子自检通过：两个种子均 >= ${MIN_PACKAGES} 个 =y 包，硬件差异仅限白名单，出固件机型符合白名单"
