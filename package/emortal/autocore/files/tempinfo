@@ -5,12 +5,20 @@
 IEEE_PATH="/sys/class/ieee80211"
 THERMAL_PATH="/sys/class/thermal"
 
+wifi_temp=""
+cpu_temp=""
+fe_temp=""
+
 case "$DISTRIB_TARGET" in
 ipq40xx/*|ipq806x/*)
 	wifi_temp="$(awk '{printf("%.1f°C ", $0 / 1000)}' "$IEEE_PATH"/phy*/device/hwmon/hwmon*/temp1_input 2>"/dev/null" | awk '$1=$1')"
 	;;
 mediatek/mt7622)
 	wifi_temp="$(awk '{printf("%.1f°C ", $0 / 1000)}' "$IEEE_PATH"/wl*/hwmon*/temp1_input 2>"/dev/null" | awk '$1=$1')"
+	;;
+airoha/*)
+	# PON 光猫上真正关心的是"CPU + 光前端"两处热点；WiFi 温度在这类机器上
+	# 既不影响 PON 注册，也会把这一行挤得很长，所以这里不取。
 	;;
 *)
 	wifi_temp="$(awk '{printf("%.1f°C ", $0 / 1000)}' "$IEEE_PATH"/phy*/hwmon*/temp1_input 2>"/dev/null" | awk '$1=$1')"
@@ -24,17 +32,31 @@ ipq40xx/*)
 	fi
 	[ -z "$mt76_temp" ] || wifi_temp="${wifi_temp:+$wifi_temp }$mt76_temp"
 	;;
+airoha/*)
+	# CPU：SoC 内部温度传感器
+	[ ! -e "$THERMAL_PATH/thermal_zone0/temp" ] || \
+		cpu_temp="$(awk '{printf("%.1f°C", $0 / 1000)}' "$THERMAL_PATH/thermal_zone0/temp" 2>"/dev/null")"
+	# 光前端：ponctl 从 PON PHY / 光模块读回的 DDMI 温度（A0 页 0x0060）。
+	# 链路没起来时这个字段可能不存在，取不到就只显示 CPU。
+	if command -v ponctl >"/dev/null" 2>&1; then
+		fe_temp="$(ponctl status --json 2>"/dev/null" |
+			sed -n 's/.*"temperature_celsius":\(-\{0,1\}[0-9][0-9.]*\).*/\1/p' | head -n1)"
+		[ -z "$fe_temp" ] || \
+			fe_temp="$(awk -v t="$fe_temp" 'BEGIN { printf "%.1f°C", t }')"
+	fi
+	;;
 *)
 	cpu_temp="$(awk '{printf("%.1f°C", $0 / 1000)}' "$THERMAL_PATH/thermal_zone0/temp" 2>"/dev/null")"
 	;;
 esac
 
-if [ -n "$cpu_temp" ] && [ -z "$wifi_temp" ]; then
-	echo -n "CPU: $cpu_temp"
-elif [ -z "$cpu_temp" ] && [ -n "$wifi_temp" ]; then
-	echo -n "WiFi: $wifi_temp"
-elif [ -n "$cpu_temp" ] && [ -n "$wifi_temp" ]; then
-	echo -n "CPU: $cpu_temp, WiFi: $wifi_temp"
-else
-	echo -n "No temperature info"
+parts=""
+[ -z "$cpu_temp" ] || parts="CPU: $cpu_temp"
+if [ -n "$wifi_temp" ]; then
+	parts="${parts:+$parts, }WiFi: $wifi_temp"
 fi
+if [ -n "$fe_temp" ]; then
+	parts="${parts:+$parts, }光前端: $fe_temp"
+fi
+
+echo -n "${parts:-No temperature info}"
