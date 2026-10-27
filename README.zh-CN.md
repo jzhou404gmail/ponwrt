@@ -1165,7 +1165,7 @@ bin/targets/airoha/an7581/ponwrt-airoha-an7581-<机型>-initramfs-recovery.itb  
 `bin/targets/airoha/an7581/ponwrt-airoha-an7581.manifest` 里应能看到
 `luci-app-airoha-npu - 1.2.0-r3`。
 
-支持并已一起编译的 12 个 AN7581 机型：
+**代码覆盖 12 个 AN7581 机型**（改代码时不能只盯着出固件的 6 个；SFP 变体也算在内）：
 
 ```
 fiberhome_hg5382a          nokia_xg-040g-md-ubi          znxt_zn504xg-d
@@ -1175,11 +1175,22 @@ fiberhome_hg5585f-cu       gemtek_xg2010g
 fiberhome_hg5585f-cu-usb-sfp
 ```
 
-> 上游 2026-10-16 之后又多了一个 AN7581 机型 **`h3c_hm2004-du`**（H3C HM-2004-DU），
-> `configs/an7581.config` 里**没有选**它 —— 想一起编就在配置里加
-> `CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_h3c_hm2004-du=y`。
+**出固件只出下面 6 个 AN7581 机型**（均不带 SFP）：
 
-AN7583 目标（`nokia_xg-040g-mf`、`nokia_xg-040g-mf-ubi`）用 `configs/an7583.config`。
+```
+fiberhome_hg5382a      fiberhome_hg5585f-ct   fiberhome_hg5585f-cu
+nokia_xg-040g-md-ubi   unionman_ung00a        znxt_zn504xg-d
+```
+
+> “代码全支持、出固件只出 6 个”是 2026-10-25 定的长期原则，全文见
+> [docs/build-models-policy.md](docs/build-models-policy.md)。
+> `scripts/check-config-seeds.sh` 里的 `BUILD_7581_DEVICES` 会做精确校验：
+> 多选（SFP 或其它机型）或少选都会让 `build.sh` 在编译前直接失败。
+> 上游新增的 **`h3c_hm2004-du`**（H3C HM-2004-DU）不在这 12 个正式机型里，也不出固件；
+> 要出的话先改白名单和 seed。
+
+AN7583 只出 `nokia_xg-040g-mf-ubi` 的 UBI 固件；非 UBI 的 `nokia_xg-040g-mf`
+不选、不出镜像（`configs/an7583.config`）。
 
 > **本机踩过的坑**：如果系统上 `git` 不可用，`base-files` 的版本会变成
 > `260923.84021~unknown`，apk 会拒绝（`~` 后面必须是十六进制）。
@@ -1295,7 +1306,8 @@ make defconfig
 ```
 
 * `configs/an7581.config` / `configs/an7583.config` 是**入库的种子配置**
-  （`TARGET_MULTI_PROFILE=y` + `TARGET_PER_DEVICE_ROOTFS=y`，一次编出该子目标下全部机型）；
+  （`TARGET_MULTI_PROFILE=y` + `TARGET_PER_DEVICE_ROOTFS=y`，一次编出 seed 里选中的机型；
+  出固件白名单见 [docs/build-models-policy.md](docs/build-models-policy.md)）；
 * `configs/release.config` 是**发布叠加**（nft offload / wireguard / tcp-bbr / cake /
   `luci-app-airoha-npu` 等 11 项）；
 * 用 `kconfig.pl +` 做**递归合并**，比 `cat` 更稳 —— 同一个符号在两份里都给值时不会留下重复行；
@@ -1401,7 +1413,7 @@ cp docs/luci-app-airoha-npu-port/01_leds.before \
 | 1 | §2.5 的 XG-040G-MF LED 命名补全 | 标 `[补全]`，未单独上机验证（只影响类设备命名，风险低） |
 | 2 | §2.3 的 HG5585F-CU 四个 LAN 灯 | 已改用上游 `91077e9a6b` 的方案（GPIO43-46 gpio-leds + `01_leds` netdev 触发），本 fork 原先的 PHY LED0 mux 路线已撤销。硬件已复验（逐脚驱动 GPIO43-46，四个灯全亮）。**但 2026-10-16 的"已上机确认正常"结论不成立**：那次是在 sysfs 里临时绑触发看到的，没落到 `/etc/config/system`，重启即失效；保留配置升级的机器上触发器绑不上、灯全灭。已补 uci-defaults 迁移 `99-hg5585f-cu-leds`（用上游 `migrate_leds()` 改名 + 补齐 6 段），五条路径真机验证（§2.3.1）。另发现 USB 灯因缺 `kmod-usb-ledtrig-usbport` 从来没亮过，已补（§2.3.2，与升级无关，全新安装也一样） |
 | 3 | §2.4 的 HG5585F-CT GPY211C | 结论基于复位时序竞态分析，需在真机上做一次热重启核对 |
-| 4 | 机型覆盖 | 修复的根因取证与刷机回归以 **ZN504XG-D** 为主力机型（UNG00A 的口序结论有换线实测记录）。其余 11 个机型已一起编译出固件，但未逐个上机验证，按 §6.2 自检即可 |
+| 4 | 机型覆盖 | 修复的根因取证与刷机回归以 **ZN504XG-D** 为主力机型（UNG00A 的口序结论有换线实测记录）。代码覆盖 12 个 AN7581 机型，但只对白名单里的 6 个出固件（见 [docs/build-models-policy.md](docs/build-models-policy.md)）；这 6 个里除主力机外的机型未逐个做完整回归，按 §6.2 自检即可 |
 | 5 | §2.7.3 的「上网」灯（主动探测） | 逻辑写好并编译进镜像，**等实机确认**：能上网 → 常亮，断网/拔纤 → 30 秒内灭；`pon-internet-led once` 可手动验证一次探测。若你常用的站点被列在探测表之外，改 `/etc/config/pon-led` 的 `urls` 即可 |
 | 6 | §2.7.2 的「光信号」灯 | **已按实机反馈退回传统语义**（正常灭、无光红闪），与原厂一致；不需要再验。硬件上这盏灯只有红光，"正常亮绿灯"不存在 |
 | 7 | §2.7 的 feed 驱动补丁（两个） | 改动在 `feed-patches/pon_drivers/airoha-xpon/`，套用/回退见 §5.2.1；`build.sh` 会自动套。`./feed-patches/apply.sh --check` 可随时看状态 |
@@ -1487,6 +1499,10 @@ docs/an7583-armv8-crypto-check.md              AN7583 硬件加密核查（硬�
                                               踩过的 CRYPTO_HW 坑、刷机后自检）
 docs/an7583-aes-check.c                        用户态探针：打印 OPENSSL_armcap_P 与真实吞吐
 docs/an7583-eip93-probe-test.c                 EIP-93 只读寄存器探针模块（证明硬件存在）
+docs/naiveproxy-an7581-sigill.md               PassWall 的 Naiveproxy 节点不通：naive 在 AN7581 上
+                                              SIGILL（clang 的 -mcpu 顺手打开了可选 crypto）+
+                                              节点地址填 IP、与服务端 SNI/证书对不上
+docs/naive-sigill-probe.c                      无 gdb 时定位 SIGILL 的 LD_PRELOAD 探针（打印 pc/偏移）
 docs/xg-040g-mf-an7583-2p5g-fix.md             XG-040G-MF 2.5G 口三个症状的完整排查记录
 docs/xg-040g-tx-power-ddmi.md                  XG-040G-MD 发射功率 -40 dBm：EN7572 BOB
                                               A0/A2 标定表与「模式挑了没标定的那张」
@@ -1502,6 +1518,9 @@ feed-patches/pon_drivers/airoha-xpon/
 feed-patches/pon_drivers/airoha-pon-frontends/
     0001-*.patch                               模式改从已标定的 BOB 表取模拟参数（-40 dBm）
     0002-*.patch                               恢复 A0←A2 的 TSSI 回退（UNG00A 的 -40 回归）
+feed-patches/packages/net/naiveproxy/
+    0001-*.patch                               aarch64 加 `+nocrypto`：否则 naive 在 AN7581 上
+                                              启动即 SIGILL，PassWall 节点静默不通
 target/linux/airoha/base-files/usr/libexec/
     pon-internet-led                           「上网」灯 = 主动探测互联网（通=常亮、连续失败=灭）
 target/linux/airoha/base-files/etc/init.d/

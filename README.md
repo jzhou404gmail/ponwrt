@@ -17,6 +17,7 @@
 | **面板 LAN 灯不亮（整批机型）** | ZN504XG-D / ZN515XG-D / Nokia MD & TF / UNG00A / an7583 的 XG-040G-MF：**netdev 触发器整批缺失**。EN8811H 驱动把 PHY 的 LED 输出设成用户自定义模式，而 LED core 注册类设备时又会把驱动写好的规则清零 —— 没有 `netdev` 触发，口 link 上了灯也是灭的 |
 | **XG-040G-MF 的 LAN 灯类设备名不确定** | `gsw_phy2/3/4_led0` 只有颜色、没有 function 与 enumerator，LED core 就按注册顺序给名字（`green:lan`、`green:lan-1`…）⇒ **哪个类设备对应哪个口没有保证**，触发会绑错口。补上 `lan` function 与枚举 2/3/4 |
 | **AN7583 硬件加密** | 内核 AES 之前**全是软件**（`/proc/crypto` 只有 13 个 software/generic 算法，连软件 `cbc(aes)` 都没有）。现在开了 ARMv8 CE（AES 全模式 + GHASH/PMULL）、`CRYPTO_CBC`、`CRYPTO_AUTHENC`、AF_ALG 与 EIP-93 引擎，并带上对应的用户态包（`kmod-crypto-hw-eip93` / `kmod-cryptodev` / `libopenssl-devcrypto`） |
+| **PassWall 的 Naiveproxy 节点连不上** | naiveproxy 走 Chromium 的 clang，`-mcpu=cortex-a53` 会**顺手打开 A53 的可选 crypto 扩展**，BoringSSL 于是把 SHA/AES 能力写成编译期常量 ⇒ **AN7581 上 naive 一启动就 SIGILL**；PassWall 不检查子进程，日志"运行完成"、节点延迟也正常，但流量全断。feed 补丁改成 `cortex-a53+nocrypto`（AN7583 有硬件 AES，仍走运行时判定不受影响）。另：节点地址要填域名，证书只有 DNS SAN、服务端也拒绝 IP SNI。详见 [docs/naiveproxy-an7581-sigill.md](docs/naiveproxy-an7581-sigill.md) |
 | **无线默认值** | 带无线的三款机型统一默认值：国家码 `CN`、5G 160MHz、2.4G/5G 各自 SSID、WPA2-PSK。**世界监管域里没有能起 AP 的 160MHz 段**，不设国家码时 5G 选 160MHz 会让整个 radio 消失 |
 | **HG5585F 侧面物理按键** | 无线（GPIO3）/ RESET（GPIO35）/ WPS（GPIO4）三个键的 DTS 与脚本本来就在，实测也都能触发；**唯一"没适配"的是 WPS** —— hostapd 的 `wps_pushbutton` 默认 `0`，按键调 `wps_start` 必然失败。现在这三款机型默认打开 WPS **PBC**，让 WPS 键开箱可用；无线键改成**运行时开关**（只写 uci 未提交增量，重启自动恢复开启，不再把关闭状态写进配置）；RESET 长按 ≥5 s 走 `factoryreset`。核查记录见 [docs/hg5585f-cu-buttons.md](docs/hg5585f-cu-buttons.md) |
 | **PON 面板灯（含 EPON 上「上网」灯永远不亮）** | ① 「光信号」灯保持传统语义（正常灭、无光红闪），曾试过"有光常亮"，实机觉得别扭已退回；② **EPON 没有 OMCI**，`service_ready` 只由用户态 OAM 代理在 CTC 认证之后才写，而普通 MPCP 注册 + PPPoE 的线路永远到不了那个状态 ⇒ `pon0-online` 恒灭，补丁改为以"LLID 注册完成"作判据；③ 「上网」灯另外改成**真实探测能不能上网**，不再跟着 PON 注册状态；④ **HG5382A 的 DTS 漏了第 4 个灯（`wan-online`/GPIO5）**，服务在跑也匹配不到灯，已补（[README.zh-CN.md](README.zh-CN.md) §2.7.4） |
@@ -35,6 +36,8 @@
 - **支持机型**：AN7581 十款 —— FiberHome HG5382A、HG5585F CT / CU、Gemtek XG2010G、
   Nokia XG-040G-MD / -TF UBI、UnionMan UNG00A、ZNXT ZN504XG-D / ZN515XG-D、H3C HM2004-DU；
   以及 AN7583 的 Nokia XG-040G-MF（`nokia_xg-040g-mf`、`nokia_xg-040g-mf-ubi` 两个 profile）。
+  **代码覆盖全部机型，但发布只出白名单里的 6 个 AN7581 机型（不含 SFP）和 AN7583 的 UBI 一款**，
+  见 [docs/build-models-policy.md](docs/build-models-policy.md)。
 - **编译**：`cp configs/an7581.config .config`（AN7583 换成 `configs/an7583.config`）→
   `make defconfig` → `make -j$(nproc)`，产物在 `bin/targets/airoha/{an7581,an7583}/`。
   本 fork 另提供 **`./build.sh`** —— 默认沿用现有 `.config` 不动它（增量编译）、自动套 feed 补丁、
