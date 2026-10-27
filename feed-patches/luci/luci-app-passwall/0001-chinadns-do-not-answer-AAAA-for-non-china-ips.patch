@@ -1,0 +1,17 @@
+diff --git a/applications/luci-app-passwall/root/usr/share/passwall/helper_chinadns_add.lua b/applications/luci-app-passwall/root/usr/share/passwall/helper_chinadns_add.lua
+index 7b8aa022a1..f3cd250825 100644
+--- a/applications/luci-app-passwall/root/usr/share/passwall/helper_chinadns_add.lua
++++ b/applications/luci-app-passwall/root/usr/share/passwall/helper_chinadns_add.lua
+@@ -541,6 +541,12 @@ if DEFAULT_TAG == "none_noip" then table.insert(config_lines, "noip-as-chnip") e
+ 
+ if DEFAULT_TAG == nil or DEFAULT_TAG == "smart" or DEFAULT_TAG == "none_noip" then DEFAULT_TAG = "none" end
+ 
++-- B 方案：非中国 IP 的域名不下发 AAAA。国内域名保留 v6 直连，
++-- 国外域名只回 A 记录，浏览器直接走 v4 进代理，不再撞公网 v6 烂路。
++if NO_IPV6_TRUST == "1" then
++	table.insert(config_lines, "no-ipv6 ip:non_china")
++end
++
+ table.insert(config_lines, "default-tag " .. DEFAULT_TAG)
+ 
+ if DEFAULT_TAG == "none" then
