@@ -1,0 +1,21 @@
+diff --git a/net/naiveproxy/src/init_env.sh b/net/naiveproxy/src/init_env.sh
+index d3b27e058..9e6cbe17b 100755
+--- a/net/naiveproxy/src/init_env.sh
++++ b/net/naiveproxy/src/init_env.sh
+@@ -89,7 +89,15 @@ target_sysroot=\"${toolchain_dir}\""
+ 
+ case "${target_arch}" in
+ "aarch64")
+-	[ -n "${cpu_type}" ] && naive_flags+=" arm_cpu=\"${cpu_type}\""
++	# -mcpu=<core> also switches on the *optional* crypto extensions that LLVM's
++	# model of cores like cortex-a53 implies (__ARM_FEATURE_AES/SHA2/CRYPTO).
++	# BoringSSL then folds CRYPTO_is_ARMv8_*_capable() to a constant 1 and calls
++	# the SHA/AES/PMULL implementations unconditionally -- on an SoC whose
++	# HWCAP has no aes/sha1/sha2 (e.g. Airoha AN7581, Cortex-A53 without the
++	# crypto block) that is an immediate SIGILL at startup.  Keep the core
++	# tuning (and CRC32) but pin the optional crypto extensions back off, so
++	# BoringSSL keeps doing its runtime getauxval() dispatch.
++	[ -n "${cpu_type}" ] && naive_flags+=" arm_cpu=\"${cpu_type}+nocrypto\""
+ 	;;
+ "arm")
+ 	naive_flags+=" arm_version=0 arm_cpu=\"${cpu_type}\""

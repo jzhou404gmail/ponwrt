@@ -211,8 +211,13 @@ done
 # $(KERNEL_BUILD_DIR)/<包名>）。只清前者等于没清：2026-10-17 查到
 # linux-airoha_an7583/airoha-xpon 里躺着 10-05 的旧源码（补丁前），
 # 而这个脚本每次都报"已套用/已清理"，编译出来的模块却还是旧的。
+#
+# 除了默认的 <包名>，还要清带版本号那档：PKG_BUILD_DIR=$(BUILD_DIR)/<包名>-<版本>
+# 的包（naiveproxy-154.0.8037.49-2 就是），光匹配 <包名> 一个字符都删不到，
+# 表现为"补丁套上了、编的还是旧源码"—— 2026-10-27 编 naiveproxy 时踩过。
 for pkg in $changed_pkgs; do
-	for dir in build_dir/target-*/"$pkg" build_dir/target-*/linux-*/"$pkg"; do
+	for dir in build_dir/target-*/"$pkg" build_dir/target-*/"$pkg"-* \
+		build_dir/target-*/linux-*/"$pkg" build_dir/target-*/linux-*/"$pkg"-*; do
 		[ -d "$dir" ] || continue
 		echo "==> 清理过期编译目录: $dir（下次 make 会重新拷贝源码并重编）"
 		rm -rf "$dir"
