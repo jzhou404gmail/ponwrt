@@ -55,3 +55,6 @@ git-src
 
 # python 缓存（体检脚本被 import 时会生成）
 __pycache__/
+
+# 本地笔记/排障记录：只留在本机，绝不入库、绝不推送
+/docs/
