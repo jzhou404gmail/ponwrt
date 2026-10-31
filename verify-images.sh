@@ -40,6 +40,11 @@
 
 set -u
 
+# The FIT parser lives next to this script in scripts/; resolve it relative to
+# this file so verification also works when called by absolute path or from a
+# different working directory.
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
 MAX_SYS_MB=${VERIFY_MAX_SYS_MB:-95}
 MAX_INIT_MB=${VERIFY_MAX_INIT_MB:-70}
 MIN_ROOTFS_MB=${VERIFY_MIN_ROOTFS_MB:-5}
@@ -95,7 +100,7 @@ for f in $files; do
 		VERIFY_KERNEL_MIN=$((KERNEL_MIN_MB * 1024 * 1024)) \
 		VERIFY_KERNEL_MAX=$((KERNEL_MAX_MB * 1024 * 1024)) \
 		VERIFY_ROOTFS_MIN=$((MIN_ROOTFS_MB * 1024 * 1024)) \
-		python3 docs/verify-fit.py 2>&1) || fail=1
+		python3 "$SELF_DIR/scripts/verify-fit.py" 2>&1) || fail=1
 	printf '%s\n' "$out" | sed 's/^/   /'
 	# 内核相关的失败（体积/截断/cpio/内核大小）属于"可自愈"这一类
 	case "$out" in
@@ -111,8 +116,8 @@ for sys in $(echo $files | tr ' ' '\n' | grep -v '^$' | grep -- '-squashfs-sysup
 	init=$(echo "$sys" | sed 's/-squashfs-sysupgrade\.itb$/-initramfs-recovery.itb/')
 	[ -f "$init" ] || continue
 
-	a=$(VERIFY_FILE="$sys" VERIFY_HASH_ONLY=1 python3 docs/verify-fit.py 2>/dev/null)
-	b=$(VERIFY_FILE="$init" VERIFY_HASH_ONLY=1 python3 docs/verify-fit.py 2>/dev/null)
+	a=$(VERIFY_FILE="$sys" VERIFY_HASH_ONLY=1 python3 "$SELF_DIR/scripts/verify-fit.py" 2>/dev/null)
+	b=$(VERIFY_FILE="$init" VERIFY_HASH_ONLY=1 python3 "$SELF_DIR/scripts/verify-fit.py" 2>/dev/null)
 	case "$a$b" in
 	*[!0-9a-f]*|"") 
 		echo "   ?? ${sys##*/}：有一侧读不到内核（$a / $b），跳过"

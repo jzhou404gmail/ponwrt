@@ -1233,7 +1233,7 @@ grep INITRAMFS_SOURCE build_dir/target-*/linux-airoha_an7581/linux-*/.config
 镜像打包阶段照单全收 ⇒ 产出一个"能编译出来、但根本不能刷"的固件。
 （那次产物连 arm64 头部自报的 `image_size` 都比文件本身大 —— 也是被中途掐断的痕迹。）
 
-**防线**：`verify-images.sh`（+ `docs/verify-fit.py`）**每次构建后自动跑**，任何一条不过就让
+**防线**：`verify-images.sh`（+ `scripts/verify-fit.py`）**每次构建后自动跑**，任何一条不过就让
 整次构建判为失败 —— 不会再打印"构建完成"，更不会让你拿到一个能刷的假象。
 
 ```sh
@@ -1477,7 +1477,8 @@ build.sh                                      编译入口：不改构建输入�
 build-watch.sh                                读 tmp/build.log 显示进度（阶段/里程碑/活性指标）
 build-live.sh                                 不依赖日志：直接看进程 + 文件系统改动
 verify-images.sh                              刷机前产物体检（FIT 内部结构/内核 cpio/体积）
-docs/verify-fit.py                            verify-images.sh 的 FIT 解析内核部分
+scripts/verify-fit.py                            verify-images.sh 的 FIT 解析内核部分
+scripts/systemd/                              Ubuntu 24.04 systemd-oomd 防杀配置/安装脚本
 package/luci-app-airoha-npu/                  NPU/Frame Engine 面板（1.2.0-r3）
 target/linux/airoha/patches-6.18/
     950-npu-expose-fw-version-sysfs.patch     NPU 版本/核数 sysfs
