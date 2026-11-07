@@ -12,7 +12,7 @@
  	struct airoha_npu_core {
 --- a/drivers/net/ethernet/airoha/airoha_npu.c
 +++ b/drivers/net/ethernet/airoha/airoha_npu.c
-@@ -833,15 +833,47 @@
+@@ -837,20 +837,53 @@
  	msleep(100);
  
  	if (!airoha_npu_wlan_msg_get(npu, 0, WLAN_FUNC_GET_WAIT_NPU_VERSION,
@@ -58,10 +58,8 @@
 +};
 +ATTRIBUTE_GROUPS(airoha_npu);
 +
- static void airoha_npu_remove(struct platform_device *pdev)
- {
- 	struct airoha_npu *npu = platform_get_drvdata(pdev);
-@@ -857,6 +889,7 @@
+ static struct platform_driver airoha_npu_driver = {
+ 	.probe = airoha_npu_probe,
  	.driver = {
  		.name = "airoha-npu",
  		.of_match_table = of_airoha_npu_match,
