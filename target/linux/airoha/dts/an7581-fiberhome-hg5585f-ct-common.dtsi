@@ -5,6 +5,8 @@
 
 &mdio {
 	/*
+	 * The explicit GPY211C ID lets phylib register GPIO34 before the first
+	 * MDIO transaction, so warm boots cannot probe the PHY while it is reset.
 	 */
 	gpy211: ethernet-phy@7 {
 		compatible = "ethernet-phy-id67c9.de10";
@@ -27,5 +29,3 @@
 	phy-mode = "2500base-x";
 	openwrt,netdev-name = "lan1";
 };
-	 * The explicit GPY211C ID lets phylib register GPIO34 before the first
-	 * MDIO transaction, so warm boots cannot probe the PHY while it is reset.
