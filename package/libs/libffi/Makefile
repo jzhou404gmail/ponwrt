@@ -4,23 +4,16 @@
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
 #
-# Restored from OpenWrt upstream: some feeds (python3-ctypes, glib2, ...)
-# expect libffi's development headers in staging.  The ImmortalWrt packages
-# feed used by this tree no longer carries a standalone libffi package, so
-# python3's --with-system-ffi build failed with "ffi.h: No such file".
-# Keep this package even though the .config may not select it: python3 has
-# it as a build dependency (see feed-patches/packages/lang/python/python3/).
-#
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=libffi
-PKG_VERSION:=3.8.0
+PKG_VERSION:=3.4.7
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/libffi/libffi/releases/download/v$(PKG_VERSION)
-PKG_HASH:=7da3e2d9a171eb0a038f592ecad3ff2bb2550f3496d87b3b29ad0cf4430c0db4
+PKG_HASH:=138607dee268bdecf374adf9144c00e839e38541f75f24a1fcf18b78fda48b2d
 
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
@@ -81,6 +74,9 @@ define Build/InstallDev
 	$(INSTALL_DIR) $(1)/usr/include
 	$(CP) \
 		$(PKG_INSTALL_DIR)/usr/include/*.h \
+		$(1)/usr/include/
+	$(CP) \
+		$(PKG_BUILD_DIR)/$(GNU_TARGET_NAME)*/fficonfig.h \
 		$(1)/usr/include/
 endef
 

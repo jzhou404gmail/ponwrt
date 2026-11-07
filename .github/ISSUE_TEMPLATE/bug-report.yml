@@ -3,6 +3,13 @@ description: Create a bug report to help us improve
 labels:
   - bug
 body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!IMPORTANT]
+        > 完全由 AI 生成的 issue 将会被关闭。请勿粘贴 AI 聊天记录到 issue 中。
+        >
+        > Issues generated entirely by AI will be closed. Do not paste AI chat transcripts into issues.
   - type: textarea
     id: description
     attributes:
