@@ -94,17 +94,37 @@ airoha_has_wifi() {
 airoha_npu_version_cache=/tmp/airoha-npu-version.cache
 
 airoha_npu_version() {
-	local firmware name version
+	local firmware="" name version soc cand
 	local cached_fw="" cached_ver=""
 
+	# 1) DT 里显式声明的 firmware-name 最可信
 	name=$(airoha_dt_read "soc/npu@1e900000/firmware-name")
-	if [ -n "$name" ]; then
-		firmware="/lib/firmware/$name"
-	elif [ ! -f /lib/firmware/airoha/en7581_npu_rv32.bin ] &&
-	     [ -f /lib/firmware/airoha/en7581_MT7996_npu_rv32.bin ]; then
-		firmware=/lib/firmware/airoha/en7581_MT7996_npu_rv32.bin
-	else
-		firmware=/lib/firmware/airoha/en7581_npu_rv32.bin
+	[ -n "$name" ] && firmware="/lib/firmware/$name"
+
+	# 2) 没有就从 SoC 推。注意 AN7581 的 SoC 叫 an7581、固件却叫 en7581_*，
+	#    而且 NPU 可以是 MT7992 或 MT7996 两种；AN7583 则是 an7583_npu_rv32.bin。
+	#    以前这里只认 en7581_*，在 XG-040G-MF 上会指向一个不存在的文件，
+	#    于是面板一直显示 Unknown。
+	if [ -z "$firmware" ]; then
+		soc=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null |
+			sed -n 's/^airoha,\(an[0-9]\{4\}\).*/\1/p' | head -n1)
+		for cand in \
+			"/lib/firmware/airoha/${soc}_npu_rv32.bin" \
+			/lib/firmware/airoha/en7581_MT7996_npu_rv32.bin \
+			/lib/firmware/airoha/en7581_npu_rv32.bin \
+			/lib/firmware/airoha/an7583_npu_rv32.bin; do
+			if [ -f "$cand" ]; then
+				firmware="$cand"
+				break
+			fi
+		done
+	fi
+
+	# 3) 再兜一层：任何 *_npu_rv32.bin，保证新 SoC 不至于直接 Unknown
+	if [ -z "$firmware" ]; then
+		for cand in /lib/firmware/airoha/*_npu_rv32.bin; do
+			[ -f "$cand" ] && { firmware="$cand"; break; }
+		done
 	fi
 
 	if [ -r "$airoha_npu_version_cache" ]; then
@@ -116,6 +136,21 @@ airoha_npu_version() {
 	fi
 
 	version=$(strings "$firmware" 2>/dev/null | grep -oE '([0-9]+\.[0-9]+\.[0-9]+-)?TLB[0-9.]+[-_v0-9]*' | head -1)
+
+	# 4) 固件里没有 TLB 串时，退回内核 950 补丁暴露的"运行中版本"
+	#    （/sys/.../npu/fw_version，AN7583 上是 "0.5" 这种 major.minor）
+	if [ -z "$version" ]; then
+		for cand in /sys/devices/platform/soc/*npu*/fw_version \
+			    /sys/devices/platform/*npu*/fw_version; do
+			[ -r "$cand" ] || continue
+			version=$(cat "$cand" 2>/dev/null)
+			case "$version" in
+			""|unknown) version="" ;;
+			*) break ;;
+			esac
+		done
+	fi
+
 	if [ -n "$version" ]; then
 		printf '%s\n%s\n' "$firmware" "$version" > "$airoha_npu_version_cache" 2>/dev/null
 	fi

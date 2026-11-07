@@ -7,6 +7,9 @@ THERMAL_PATH="/sys/class/thermal"
 
 wifi_temp=""
 cpu_temp=""
+gbe_temp=""
+die_temp=""
+extra_temp=""
 fe_temp=""
 
 case "$DISTRIB_TARGET" in
@@ -33,11 +36,24 @@ ipq40xx/*)
 	[ -z "$mt76_temp" ] || wifi_temp="${wifi_temp:+$wifi_temp }$mt76_temp"
 	;;
 airoha/*)
-	# CPU：SoC 内部温度传感器
-	[ ! -e "$THERMAL_PATH/thermal_zone0/temp" ] || \
-		cpu_temp="$(awk '{printf("%.1f°C", $0 / 1000)}' "$THERMAL_PATH/thermal_zone0/temp" 2>"/dev/null")"
+	# AN7581 只有一颗 SoC 温度传感器；AN7583 从 6.18.55 起上游暴露三个
+	# （thermal_zone0/1/2 = cpu-thermal / gbe-thermal / cpu-die-thermal）。
+	# 这里按 type 而不是编号取，顺序固定为 CPU → GBE → DIE，认不出的
+	# 传感器原样附在后面，不至于因为换内核就把显示弄丢。
+	for z in "$THERMAL_PATH"/thermal_zone*; do
+		[ -r "$z/temp" ] || continue
+		zt="$(cat "$z/type" 2>"/dev/null")"
+		zv="$(awk '{printf("%.1f°C", $0 / 1000)}' "$z/temp" 2>"/dev/null")"
+		[ -n "$zv" ] || continue
+		case "$zt" in
+		cpu-thermal)     cpu_temp="$zv" ;;
+		gbe-thermal)     gbe_temp="$zv" ;;
+		cpu-die-thermal) die_temp="$zv" ;;
+		*)               extra_temp="${extra_temp:+$extra_temp, }${zt:-thermal}: $zv" ;;
+		esac
+	done
 	# 光前端：ponctl 从 PON PHY / 光模块读回的 DDMI 温度（A0 页 0x0060）。
-	# 链路没起来时这个字段可能不存在，取不到就只显示 CPU。
+	# 链路没起来时这个字段可能不存在，取不到就只显示 SoC 那几路。
 	if command -v ponctl >"/dev/null" 2>&1; then
 		fe_temp="$(ponctl status --json 2>"/dev/null" |
 			sed -n 's/.*"temperature_celsius":\(-\{0,1\}[0-9][0-9.]*\).*/\1/p' | head -n1)"
@@ -52,11 +68,14 @@ esac
 
 parts=""
 [ -z "$cpu_temp" ] || parts="CPU: $cpu_temp"
+[ -z "$gbe_temp" ] || parts="${parts:+$parts, }GBE: $gbe_temp"
+[ -z "$die_temp" ] || parts="${parts:+$parts, }DIE: $die_temp"
 if [ -n "$wifi_temp" ]; then
 	parts="${parts:+$parts, }WiFi: $wifi_temp"
 fi
 if [ -n "$fe_temp" ]; then
 	parts="${parts:+$parts, }光前端: $fe_temp"
 fi
+[ -z "$extra_temp" ] || parts="${parts:+$parts, }$extra_temp"
 
 echo -n "${parts:-No temperature info}"
