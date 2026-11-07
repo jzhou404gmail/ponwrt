@@ -1,0 +1,18 @@
+diff --git a/devel/gn/Makefile b/devel/gn/Makefile
+index d068590c9..6c53694ff 100644
+--- a/devel/gn/Makefile
++++ b/devel/gn/Makefile
+@@ -37,7 +37,12 @@ define Package/gn/description
+ endef
+ 
+ define Host/Configure
+-	$(PYTHON) $(HOST_BUILD_DIR)/build/gen.py \
++	# gn's build/gen.py defaults CXX to clang++ on Linux; on hosts where that
++	# clang++ looks for GCC 13 headers but only GCC 12 is installed, the build
++	# dies with "fatal error: 'map' file not found".  Pin it to HOSTCXX (g++);
++	# the _NOCACHE variant is used because gen.py treats the value as a single
++	# executable and a ccache prefix would break it.
++	CXX="$(HOSTCXX_NOCACHE)" $(PYTHON) $(HOST_BUILD_DIR)/build/gen.py \
+ 		--no-last-commit-position \
+ 		--allow-warnings
+ endef
