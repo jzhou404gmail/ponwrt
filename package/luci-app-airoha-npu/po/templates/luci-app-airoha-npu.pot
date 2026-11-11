@@ -165,6 +165,9 @@ msgstr ""
 msgid "Conflicts & Alerts"
 msgstr ""
 
+msgid "Congestion buffer: 0% is normal while no port egress overflows its reservation."
+msgstr ""
+
 msgid "Frequency History"
 msgstr ""
 
@@ -301,6 +304,9 @@ msgid "Max Freq"
 msgstr ""
 
 msgid "Mode & Acceleration Status"
+msgstr ""
+
+msgid "max since boot"
 msgstr ""
 
 msgid "Model"

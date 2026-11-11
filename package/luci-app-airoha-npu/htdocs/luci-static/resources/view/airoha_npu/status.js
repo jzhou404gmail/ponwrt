@@ -909,10 +909,14 @@ function renderCdmCard(c) {
 }
 
 /*
- * 峰值保持：PSE 共享缓冲是瞬时快照，而池子有 12064 个缓冲 —— 5 秒一次的轮询
- * 几乎总落在 0，1 位小数的百分比因此永远显示 0.0%，看不出任何突发。
- * 记住本次页面打开以来的最大占用，就能把"刚才有没有压满过"表达出来；
- * 峰值也一直是 0，则说明这段时间确实没有突发。页面重新加载时归零。
+ * PSE 共享缓冲是"拥塞公共池"：每个 PSE 端口先用自己的预留 buffer，只有出口
+ * 队列超出预留时才向共享池借用。所以空闲或正常转发时 used 就是 0（厂商手册里
+ * 的示例也是 SHARED_USED_CNT:0x0000 / SHARED_FREE_CNT:0x2f20），0.0% 并不
+ * 代表读寄存器失败。
+ *
+ * 5 秒一次的瞬时采样几乎总落在 0，光靠页面自己记峰值抓不到突发，所以后端还
+ * 读 PSE_BUF_USE_REC(+0x100) 的硬件高水位（开机以来）。旧后端没有 peak_used
+ * 字段时退回本地采样峰值。页面重新加载时本地峰值归零。
  */
 var psePeakUsed = 0;
 
@@ -921,22 +925,32 @@ function renderPseBufferCard(pse) {
 	var used = Number(pse.used) || 0, free = Number(pse.free) || 0;
 	var total = used + free;
 	var pct = total > 0 ? used / total * 100 : 0;
+	var hwPeak = Number(pse.peak_used);
+	if (isFinite(hwPeak) && hwPeak > psePeakUsed)
+		psePeakUsed = hwPeak;
 	if (used > psePeakUsed)
 		psePeakUsed = used;
+	// 共享池大小随端口预留变化，旧配置下的高水位可能大于当前的 used+free。
+	if (total > 0 && psePeakUsed > total)
+		psePeakUsed = total;
 	var peakPct = total > 0 ? psePeakUsed / total * 100 : 0;
 	var accent = total <= 0 ? 'var(--ds-border-strong)'
 		: pct >= 80 ? 'var(--ds-error)' : pct >= 50 ? 'var(--ds-warn)' : 'var(--ds-ok)';
 	return aui.card({
 		name: _('PSE shared buffer'),
-		tag: total > 0 ? aui.fmtPct(pct, 1) : '—',
+		tag: total > 0 ? aui.fmtPct(pct, pct > 0 && pct < 0.1 ? 2 : 1) : '—',
 		accent: accent,
-		body: aui.bar({
-			pct: pct,
-			accent: accent,
-			title: _('HW Buffer'),
-			right: aui.fmtK(used) + ' / ' + aui.fmtK(total) +
-				' · ' + _('peak') + ' ' + aui.fmtPct(peakPct, 1)
-		})
+		body: [
+			aui.bar({
+				pct: pct,
+				accent: accent,
+				title: _('HW Buffer'),
+				right: aui.fmtK(used) + ' / ' + aui.fmtK(total) +
+					' · ' + _('max since boot') + ' ' + aui.fmtPct(peakPct, 1)
+			}),
+			E('p', { 'class': 'ai-hint' },
+				_('Congestion buffer: 0% is normal while no port egress overflows its reservation.'))
+		]
 	});
 }
 

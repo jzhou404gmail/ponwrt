@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
 
 LUCI_NAME:=luci-app-airoha-npu
 PKG_VERSION:=2.0.0
-PKG_RELEASE:=9
+PKG_RELEASE:=10
 
 # 本包不在 luci feed 里，luci.mk 的 findrev 取不到 git 历史，luci-i18n-*-zh-cn
 # 会被打成版本 0（翻译更新永远无法作为升级安装）。固定成应用版本。

@@ -1,7 +1,7 @@
 # luci-app-airoha-npu（上游 2.0.0，随仓库 vendored）
 
 - 上游：<https://github.com/naoki66/luci-app-airoha> @ `323539cf229bce52754fbb318135c9c56c514d2f`
-- 版本：2.0.0-r9
+- 版本：2.0.0-r10
 
 Airoha AN7581 / AN7583 的 SoC/NPU 状态页：CPU（频率/调频/温度）、Frame Engine
 （GDM/CDM/PSE 计数器）、PPE 硬件卸载（flow 表、命中率、绑定数）、以太网拓扑、
@@ -23,13 +23,19 @@ GDM→netdev、加 CDM1/CDM2 卡片等。
 所以继续保持本地分支的代价大于收益：界面越走越远，还得自己维护。换成上游后
 界面与上游 100% 一致。
 
-## 相对上游的改动（只有两处）
+## 相对上游的改动（只有三处）
 
 1. `menu.d` 的标题由 `Airoha Soc` 改成 `Airoha SoC`（大小写；菜单路径沿用上游的
    `admin/status/airoha`）。
 2. 加 `PKG_PO_VERSION`：本包不在 luci feed 里，`findrev` 取不到 git 历史，
    `luci-i18n-airoha-npu-zh-cn` 会被打成版本 0，翻译更新永远无法作为升级安装。
    与 `package/lucky`、`package/luci-app-mesh-conf` 同样处理。
+3. PSE 共享缓冲卡片补上硬件高水位与"拥塞缓冲"说明。上游只显示 5 秒一次的瞬时
+   值，而这个池子只在端口出口队列超出预留时被借用（厂商手册 102 页：共享缓冲
+   超过阈值才在 ingress 丢包），所以空闲网络下永远显示 0.0%，看起来像坏了。
+   现在后端同时读 `PSE_BUF_USE_REC`（`0x1fb50100`，[30:16] = 开机以来的最大
+   SHARE_USED_CNT），前端显示"当前 / 开机以来最高"。顺带把 used 的掩码从
+   `0xFFFF` 改成厂商头文件里的 `0x7FFF`（[30:16]，bit 31 不属于计数）。
 
 ## 运行时前提（镜像里已满足）
 

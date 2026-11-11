@@ -166,6 +166,9 @@ msgstr "客户端"
 msgid "Conflicts & Alerts"
 msgstr "冲突与告警"
 
+msgid "Congestion buffer: 0% is normal while no port egress overflows its reservation."
+msgstr "拥塞缓冲：没有端口出口队列超出预留时，0% 属正常。"
+
 msgid "Frequency History"
 msgstr "频率历史"
 
@@ -303,6 +306,9 @@ msgstr "最大频率"
 
 msgid "Mode & Acceleration Status"
 msgstr "模式与加速状态"
+
+msgid "max since boot"
+msgstr "开机以来最高"
 
 msgid "Model"
 msgstr "型号"

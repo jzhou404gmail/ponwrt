@@ -581,20 +581,32 @@ _cdm_json() {
 }
 
 get_frame_engine() {
-	local psb pse_used pse_free gdm cdm entry reg base spec
+	local psb pse_used pse_free pse_peak rec gdm cdm entry reg base spec
 
 	if ! command -v devmem >/dev/null 2>&1; then
 		printf '{"available":false,"reason":"devmem_unavailable"}'
 		return
 	fi
 
-	# PSE shared buffer: [31:16] buffers in use, [14:0] free.
+	# PSE shared buffer: [30:16] buffers in use, [14:0] free.
 	psb=$(_devmem32 0x1fb50104) || {
 		printf '{"available":false,"reason":"register_read_failed"}'
 		return
 	}
-	pse_used=$(( (psb >> 16) & 0xFFFF ))
+	# Vendor field is [30:16] (fe_reg_en7512.h: PSE_SHARE_BUF_USED_CNT_MASK
+	# 0x7fff); masking 0xffff would fold bit 31 into the count. The two
+	# fields always add up to the pool size, ~12064 buffers on this SoC.
+	pse_used=$(( (psb >> 16) & 0x7FFF ))
 	pse_free=$(( psb & 0x7FFF ))
+
+	# Hardware high-water mark: PSE_BUF_USE_REC (+0x100), [30:16] is the
+	# largest SHARE_USED_CNT the PSE has seen since reset, [14:0] the
+	# smallest free-queue count. The shared pool is only borrowed while a
+	# port is congested, so a 5 s snapshot almost always lands on an idle
+	# instant and the page-local peak can never see a burst; this record
+	# can. Unreadable -> 0, and the frontend keeps its sampled peak.
+	pse_peak=0
+	rec=$(_devmem32 0x1fb50100) && pse_peak=$(( (rec >> 16) & 0x7FFF ))
 
 	# GDM register blocks, keyed by the device-tree ethernet@N index so the
 	# frontend can label each card from the same topology the port table uses.
@@ -632,8 +644,8 @@ get_frame_engine() {
 		return
 	fi
 
-	printf '{"available":true,"pse":{"used":%s,"free":%s},"gdm":[%s],"cdm":[%s]}' \
-		"$pse_used" "$pse_free" "$gdm" "$cdm"
+	printf '{"available":true,"pse":{"used":%s,"free":%s,"peak_used":%s},"gdm":[%s],"cdm":[%s]}' \
+		"$pse_used" "$pse_free" "$pse_peak" "$gdm" "$cdm"
 }
 
 # Persist CPU governor / max_freq to UCI so the choice survives a reboot.
