@@ -8,6 +8,21 @@
 > 📌 每一处修复的**现象、根因、寄存器级证据与上机验证方法**都记在
 > **[README.zh-CN.md](README.zh-CN.md)**。英文说明见 **[README.en.md](README.en.md)**。
 
+## 仓库原则
+
+完整清单与自查步骤见 **[AGENTS.md](AGENTS.md)**。四条硬规矩：
+
+1. **自有内容只留本地** —— 自有服务器/域名/节点与凭据、私钥与 token、原厂备份与设备身份
+   数据、本机笔记与排障记录、本机 `.config` 与构建产物、厂商非公开资料与闭源二进制，
+   **一律只保存在本机**：不 commit、不 push、不上传 Release/Actions、不贴进 issue/PR。
+   只 `git add <明确路径>`，永远不用 `git add -A` / `git add .`；提交前跑
+   `./scripts/check-local-only.sh --staged`，推送前跑 `--all`。
+2. **一条主线** —— 只维护 `master`；`pr/*` 只是给上游 PR 的提交快照；
+   `git push` 默认推 `fork`（`jzhou404gmail/ponwrt`），不会误推上游。
+3. **发布白名单** —— 代码覆盖 12 款 AN7581，但只发布白名单里的 6 款（不带 SFP）
+   + AN7583 的 UBI 一款；发布只用 `configs/` 种子，不用任何人的本机 `.config`。
+4. **构建只做加法** —— `build.sh` 默认不改 `.config`；只有显式 `--config=` 才重建。
+
 ## 本 fork 改了什么
 
 | 方面 | 改动 |

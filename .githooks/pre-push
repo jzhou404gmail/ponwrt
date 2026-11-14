@@ -1,0 +1,27 @@
+#!/bin/sh
+# 推送前：整棵树 + 待推提交里都不能出现“自有/本机”内容。
+# 规则见 AGENTS.md；不要用 git push --no-verify 绕过。
+set -eu
+top=$(git rev-parse --show-toplevel)
+zero=0000000000000000000000000000000000000000
+rc=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+	if [ "$local_sha" = "$zero" ]; then
+		continue
+	fi
+
+	if [ "$remote_sha" = "$zero" ]; then
+		# 新分支：检查所有尚未存在于任何远程的提交
+		range="$local_sha --not --remotes"
+	else
+		range="$remote_sha..$local_sha"
+	fi
+
+	if ! "$top/scripts/check-local-only.sh" --range "$range"; then
+		echo "!! 拒绝推送 $local_ref -> $remote_ref（命中本地专属内容）" >&2
+		rc=1
+	fi
+done
+
+exit $rc

@@ -1,0 +1,5 @@
+#!/bin/sh
+# 提交前：暂存区里不能出现“自有/本机”内容。规则见 AGENTS.md。
+set -eu
+top=$(git rev-parse --show-toplevel)
+exec "$top/scripts/check-local-only.sh" --staged
