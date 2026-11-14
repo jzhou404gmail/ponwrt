@@ -221,7 +221,7 @@ uci show system | grep led_                 # 期望 6 段：led_lan1..4 + led_u
 > 📄 **完整排查记录（问题 / 分析 / 修复 / 处理 / 测试和结果）见
 > [`docs/hg5585f-cu-panel-leds.md`](docs/hg5585f-cu-panel-leds.md)。** 本节是摘要。
 
-**现象**（2026-10-17，同机 192.168.32.254，跑 10-16 12:30 的镜像）：CU 面板上四个 LAN 灯
+**现象**（2026-10-17，同机 192.0.2.254，跑 10-16 12:30 的镜像）：CU 面板上四个 LAN 灯
 全灭，但 `blue:lan-1..4` 四个类设备都在，LAN1/LAN3 插着线也不亮：
 
 ```
@@ -359,7 +359,7 @@ uci commit system && /etc/init.d/led restart
 * 后果：这两个 LED 类设备在 `trigger` 列表里**找不到 `usbport`**，
   绑不上、永远不亮，日志里只有一条"触发器不存在"。
 
-实测（CU，192.168.32.254）：
+实测（CU，192.0.2.254）：
 
 ```sh
 grep -c usbport /sys/class/leds/blue:usb-1/trigger    # 0 —— 列表里没有 usbport
@@ -625,7 +625,7 @@ EOF
 
 #### 2.7.4 HG5382A 的第 4 个灯：设备树整台漏了 `wan-online` 节点 `[实测]`
 
-**现象**：`192.168.32.254` 的 HG5382A（`fiberhome,hg5382a`）升级到带 `pon-internet-led`
+**现象**：`192.0.2.254` 的 HG5382A（`fiberhome,hg5382a`）升级到带 `pon-internet-led`
 的镜像后，面板第 4 个「宽带」灯始终不亮；同一镜像在 Nokia XG-040G-MD、HG5585F-CT/CU
 上正常。
 

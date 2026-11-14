@@ -14,7 +14,7 @@ programmed bytes into the empty slot before the BOB is loaded into DM and
 before prepare() writes them to the runtime register.  This is the same
 behaviour the driver had before 0001; it is not dead code.
 
-Reproduced on UNG00A at 192.168.32.254: factory A0 TSSI was
+Reproduced on UNG00A at 192.0.2.254: factory A0 TSSI was
 0xffffffff, A2 TSSI 0x69de9401, tx_power_dbm -40.00, tx_bias_ma 16.41
 and calibration: ready.  Writing the A2 words into runtime register
 0x00b4 made the TX power read 0x6adb (+4.4 dBm) without touching the
