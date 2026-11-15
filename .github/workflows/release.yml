@@ -26,6 +26,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     environment: release
+    env:
+      # rules.mk 在 CONFIG_CCACHE=y 时 export CCACHE_DIR=$(TOPDIR)/.ccache
+      # 和 CCACHE_BASEDIR=$(TOPDIR)，这两个由 make 接管；下面两个只有这里能设。
+      # 指纹用编译器版本而不是 mtime：runner 每次重建 toolchain，mtime 必变，
+      # 不加这条缓存永远打不中。CCACHE_NOCOMPRESS 已由 rules.mk 打开。
+      CCACHE_COMPILERCHECK: '%compiler% -dumpmachine; %compiler% -dumpversion'
+      CCACHE_MAXSIZE: 1G
     strategy:
       fail-fast: false
       matrix:
@@ -70,6 +77,18 @@ jobs:
           restore-keys: |
             ponwrt-dl-${{ matrix.target }}-
 
+      - name: Cache compiler objects (ccache)
+        uses: actions/cache@v4
+        with:
+          # configs/*.config 里 CONFIG_CCACHE=y、CONFIG_CCACHE_DIR="" ⇒ 缓存落在
+          # $(TOPDIR)/.ccache。key 里带 sha 是为了每轮都能"存新版"，restore-keys
+          # 前缀命中最近一次，既不会互相覆盖，也不会永远打不中。
+          path: .ccache
+          key: ponwrt-ccache-${{ matrix.target }}-${{ hashFiles('configs/*.config') }}-${{ github.sha }}
+          restore-keys: |
+            ponwrt-ccache-${{ matrix.target }}-${{ hashFiles('configs/*.config') }}-
+            ponwrt-ccache-${{ matrix.target }}-
+
       - name: Install feeds
         run: |
           ./scripts/feeds update -a
@@ -105,6 +124,16 @@ jobs:
 
       - name: Build ${{ matrix.target }}
         run: make -j"$(nproc)"
+
+      - name: Report ccache statistics
+        if: always()
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: |
+          # 缓存是否真的生效，看这里的 hit rate；一直是 0% 就说明 key 或
+          # CCACHE_COMPILERCHECK 有问题，别以为配了缓存就快了。
+          ccache --version | head -n1 || true
+          ccache -s || true
 
       - name: Verify images
         run: |
