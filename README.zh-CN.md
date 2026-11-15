@@ -59,6 +59,9 @@
 | 22 | `airoha/patches-6.18` | **NPU 固件版本暴露到 sysfs**（`950-npu-expose-fw-version-sysfs.patch`，§3）：用户态不必再去 grep 启动日志拿版本号 | 功能补充 |
 | 23 | `configs/release.config` | 把 `luci-app-airoha-npu` 加进发布配置（§5.4） | 默认值 |
 | 24 | `build` | **裸 `make` 也套 feed 补丁**（`include/toplevel.mk` 的 `feed-patches-apply`，任何目标都先走它）；`apply.sh` 把"git 用不了"与"补丁真冲突"分开报并新增 `--reset`；`build.sh`/`make` 增加 git 与 `REVISION=unknown` 自检；修正 `build_dir` 清理路径（kmod 包在 `linux-<板>_<子目标>/<包>`，原来没清到，`an7583` 里躺着 10-05 的旧源码）（§5.1.1、§5.2.1） | 工具/根因修复 |
+| 25 | `airoha/patches-6.18` | **补上游 `928` / `999`**（PPE bind-rate debugfs、EN7581/AN7583 把 BPDU/LLDP trap 到 conduit）＋ `606`/`925` 两处 debug 格式符修正。只做**定点 backport**，不做全量 merge（§8.4） | 上游跟进 |
+| 26 | `airoha/patches-6.18` | **`931`：AN7581 开 PPE 硬件流卸载后 IPv6 PPPoE 掉到几十 KB/s** —— L2 subflow 覆写 PPPoE ID、NPU stats 死锁、1518 字节 MTU 越界。移植自 `wuziwei/ponwrt-ZN504-HG5585F`，**未上机**（§2.9） | 硬件修复（待验证） |
+| 27 | `.github/workflows` | **ccache 持久化**：把 `.ccache` 存进 Actions 缓存，指纹改用编译器版本，`an7581`/`an7583` 各一份（§5.6） | 工具 |
 
 ---
 
@@ -862,6 +865,54 @@ dmesg | grep -iE "eip93|safexcel"
 
 ---
 
+### 2.9 AN7581 开硬件流卸载后 IPv6 PPPoE 掉到几十 KB/s `[未上机]`
+
+**来源**：`wuziwei/ponwrt-ZN504-HG5585F` 的
+`931-net-airoha-fix-wan-ipv6-pppoe-flow-offload.patch`（commit `eb0f2612`）。
+本 fork 只借代码与根因分析，**原作者 `Signed-off-by` 原样保留**（取舍见 §8.4）。
+
+**它改的四处**（都能在本仓库代码里对上号，不是黑盒结论）：
+
+| # | 位置 | 原来的毛病 |
+|---|---|---|
+| 1 | `airoha_ppe_foe_insert_entry()` | 软件流没命中（`commit_done` 为假）时，**任何**包都会继续落到 `l2_lookup`；路由包（IPv6）被当成 L2 subflow 提交，`src_mac_hi` 被客户端 MAC 覆写、`PSE_PORT` 改指 NPU 协处理器（6）⇒ 立即黑洞。改为**只有 `PPE_PKT_TYPE_BRIDGE` 才落** |
+| 2 | `airoha_ppe_foe_commit_subflow_entry()` | 写 `SMAC_ID=0xf` 用的是 `FIELD_PREP()`，会把低 16 位 `AIROHA_FOE_MAC_PPPOE_ID`（`airoha_eth.h:311`）一起清零 ⇒ PPPoE session ID 报废。改为先保住 PPPoE ID 再 OR |
+| 3 | `airoha_ppe_foe_flow_stats_update()` / `..._entry_get_stats()` | AN7581 上没有 IPv6 route 条目的 NPU 计数布局，读写计数会让流水线卡死。与 `930` 对 native L2B 的处理同理。**代价：v6 流不再有字节/包计数** |
+| 4 | `airoha_dev_set_xmit_frame_size()` / `airoha_ppe_set_xmit_frame_size()` | WAN MTU0/MTU1 与 PPE frame size 写死 `VLAN_ETH_HLEN + mtu`：PPPoE 1492 + 8 + VLAN 18 = **1518，正好等于旧上限**，再套一层标签（QinQ）就是硬件静默丢包。各加 16 字节余量（`REG_WAN_MTU0` 0x2300 里确实是 MTU0=13:0 / MTU1=29:16 两个字段，所以那句"连写两个 rmw"不写错寄存器） |
+
+**本 fork 相对原补丁改了什么**（语义未改，只为能零 fuzz 打进来、符合内核风格）：
+
+- 原补丁 `commit_subflow_entry` 那个 hunk 的 context 计数是错的（`-896,7`/`+897,8`，实际 8/9 行），
+  `patch` 只能靠 fuzz 1 吞下去，并把后面两个 hunk 当成 trailing garbage —— 本 fork **重新生成了全部 hunk**
+  （`patch -F0` 零 fuzz、零 offset，实测通过）；
+- `insert_entry` 新加的条件一行 95 列（内核 80 列上限）；`entry_get_stats` 里同一个 `FIELD_GET`
+  读了三遍；都收敛成可 review 的写法。
+
+**上机验证清单**（先开硬件卸载，再关掉做对照 —— 不做对照就无法区分"补丁有效"和"本来就不掉速"）：
+
+```sh
+# 1) 打开硬件流卸载（本仓库默认只开软件卸载：firewall.config 里只有 flow_offloading 1）
+uci set firewall.@defaults[0].flow_offloading='1'
+uci set firewall.@defaults[0].flow_offloading_hw='1'
+uci commit firewall && /etc/init.d/firewall restart
+
+# 2) 状态：flowtable 有没有真正建立、NPU 有没有报错
+nft list flowtables | head -20
+dmesg | grep -iE 'ppe|npu|airoha.*(err|timeout|reset)'
+
+# 3) v6 双栈吞吐 + 边界大小不被硬件丢
+iperf3 -6 -c <peer>
+ping -6 -s 1452 -M do <peer>      # PPPoE MTU 1492 下的最大 v6 载荷
+
+# 4) 对照：把 flow_offloading_hw 关掉重测，应回到"不开硬件卸载"的旧行为
+```
+
+> ⚠️ **不要**因为这份补丁就默认打开 `flow_offloading_hw`。`package/network/config/firewall/files/firewall.config`
+> 里默认仍只有 `flow_offloading 1`（软件）；硬件卸载是否默认开，要等上表跑完再决定。
+> 另外第 4 处改动**不依赖**卸载开关，编译进内核就生效（MTU 余量），这也是它最没有争议的一条。
+
+---
+
 ## 3. LuCI NPU 面板（`luci-app-airoha-npu`）
 
 移植自 [rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu)
@@ -1336,11 +1387,24 @@ make defconfig
 > ② 上游这份是**手动触发**（`workflow_dispatch` + tag 输入），不是 uboot-an758x 那种
 > "推 tag 就发"。想改成推 tag 自动发，在 `on:` 下加 `push: tags: ['v*']`，
 > 并把 release job 里用 `inputs.tag` 的地方换成 `github.ref_name` 即可；
-> ③ `ccache` 在依赖列表里装了，但 `configs/*.config` 里 `CONFIG_CCACHE` 是**关的**
-> （`# CONFIG_CCACHE is not set`，`CONFIG_CCACHE_DIR=""`）⇒ 缓存实际没生效，每次
-> 发布都是全量编译。想加速重复发布，可以在 `make defconfig` 前给 `.config` 加一行
-> `CONFIG_CCACHE=y`，再缓存 `<topdir>/.ccache`（`rules.mk` 里目录为空时回落到它）。
-> **本仓库没有 CI 实测耗时记录**，二次发布前建议先跑一次看是否落在 360 分钟的 job 上限内。
+> ③ `ccache` 以前是"**装了但白装**"：`configs/*.config` 里 `CONFIG_CCACHE=y`、`CONFIG_CCACHE_DIR=""`
+> ⇒ `rules.mk` 把目录定在 `<topdir>/.ccache`（并 `export CCACHE_BASEDIR=$(TOPDIR)`、
+> `CCACHE_NOCOMPRESS=true`，这两个环境变量由 make 覆盖，workflow 里设了也没用），
+> 但 workflow 从来没缓存过这个目录 ⇒ 每次发布都是冷缓存全量编译。现在补了
+> `actions/cache@v4`（`path: .ccache`，key 带 `matrix.target` + `configs/*.config` 哈希 + `github.sha`，
+> `restore-keys` 前缀命中最近一次），以及三条只在 workflow 里能设的：
+>
+> | 设置 | 为什么 |
+> |---|---|
+> | `CCACHE_COMPILERCHECK='%compiler% -dumpmachine; %compiler% -dumpversion'` | 默认指纹是 mtime，runner 每轮重建 toolchain、mtime 必变 ⇒ 永不命中。改成编译器版本才有跨 runner 命中 |
+> | `CCACHE_MAXSIZE=1G` | 缓存大小要**封顶**：仓库级 Actions 缓存配额 10GB，本机实测 `dl/` 就有 **5.5GB**，两个 target 再各 1GB 合计 8.5GB，留下"改 config 导致新旧 `dl/` 交替"的余量。`rules.mk` 的 `CCACHE_NOCOMPRESS=true` 让缓存不压缩，不封顶会越滚越大 |
+> | `Report ccache statistics` 步骤 | 用 `ccache -s` 看命中率；一直是 0% 就说明 key 或 `COMPILERCHECK` 配错了，"配了缓存"不等于"命中缓存" |
+>
+> **本机 ccache 实测值**（同一套 `an7583` 配置、9.8GB 缓存）：956374 次编译调用里 72.6% 可缓存、
+> 其中 **82.4% 命中**（direct 90%）。CI 里只给 1GB，按 LRU 淘汰后命中率会明显低于这个数，
+> 但最热的那些目标文件（内核/工具链/大头 C 文件）仍然留得住 —— 这是"先能用、别把配额撑爆"的取值，
+> 配额宽裕时可以往上调。**本仓库没有 CI 实测耗时记录**，二次发布前建议先跑一次看是否落在
+> 360 分钟的 job 上限内，并对比第一次（冷）与第二次（热）的墙钟时间。
 
 ---
 
@@ -1469,6 +1533,31 @@ grep -n 'gpio4[3-6]' target/linux/airoha/dts/an7581-fiberhome-hg5585f-*.dtsi   #
 也一定不报冲突，所以**每次同步后都要把 DTS 手工 diff 一遍**，别只看 git 有没有冲突 ——
 这次的决定是两处都跟随上游，但**必须是你看着 diff 主动决定的**，不能被 git 悄悄带走。
 
+### 8.4 与 `wuziwei/ponwrt-ZN504-HG5585F` 的关系：只借代码，不借预设
+
+它是 `pbs05/ponwrt` 的**另一个 fork**（只做 ZN504XG-D / HG5585F），它合并到的上游是
+2026-11-07 的 `d9dd3a49f7`，比本 fork 的 `03c1345447` 新两周。本 fork 从它那里**只取了两样**：
+
+1. §2.9 的 `931` 内核补丁（保留 `From:` / `Signed-off-by`，并注明我们改了哪些 hunk）；
+2. CI 的 ccache 持久化思路（§5.6）—— 这条本来与设备无关，是我们自己漏掉的。
+
+这次**没有整包 merge** 上游那 641 个提交（大部分是 ImmortalWrt 那条合并线，会牵动内核与所有
+子树），只把与 airoha 直接相关的 `928`/`999` 定点 backport 过来（§1 第 25 条）：两个补丁打在本树
+6.18.55 上只有 1 行偏移、零 fuzz，`make target/linux/prepare` 与 `make target/linux/compile` 都已通过。
+整包同步留到真要跟内核或其它子系统时再做，届时 §8.3 的检查清单照旧。
+
+**明确不采纳**：
+
+| 它的做法 | 为什么不跟 |
+|---|---|
+| 删掉 SafeXcel / EIP-93 加密加速（称 DMA 颠簸） | 与本 fork §2.8 在 AN7583 上的实测结论**相反**（那边是"内核态 AES 一个都没开"，我们才把 EIP-93 编回去）。不同机型、不同取舍，不能互相套用 |
+| UCI 预设（momo/sing-box、`packet_steering=0`、Wi-Fi 绑核、16MB sysctl、主题、插件增删） | 个人部署口味，按 [AGENTS.md](AGENTS.md) 只留本地、不入库 |
+| release 正文的"独家/根治/100%"叙述 | 没有可复现证据，只能当**线索**；本 fork 写进 README 的每条都要能对上代码或寄存器 |
+| 整包 release 镜像 | 里面带着它自己的 `.config` 与 UCI 预设；本 fork 只发 `configs/` 种子编出来的镜像（§5.4） |
+
+它自己也有过"把个人 DDNS 域名和私有防火墙规则写进 `uci-defaults`、随后又删掉"的提交 ——
+正是 AGENTS.md 要防的那类事故。**借代码可以，借配置不行。**
+
 ---
 
 ## 9. 目录导览（本 fork 新增部分）
@@ -1486,7 +1575,10 @@ scripts/verify-fit.py                            verify-images.sh 的 FIT 解析
 scripts/systemd/                              Ubuntu 24.04 systemd-oomd 防杀配置/安装脚本
 package/luci-app-airoha-npu/                  NPU/Frame Engine 面板（1.2.0-r3）
 target/linux/airoha/patches-6.18/
+    928-net-airoha-expose-PPE-bind-rate-threshold.patch   PPE bind-rate 阈值（debugfs 读写）
+    931-net-airoha-fix-wan-ipv6-pppoe-flow-offload.patch  IPv6 PPPoE 硬件流卸载（§2.9，待上机）
     950-npu-expose-fw-version-sysfs.patch     NPU 版本/核数 sysfs
+    999-mt7530-trap-frames-to-conduit.patch   EN7581/AN7583 把 BPDU/LLDP trap 到 conduit
 package/base-files/files/                     IPTV 组播 MAC 学习修复（4 个触发点）
 package/base-files/files/lib/functions/
     uci-defaults.sh                           + ucidef_set_wireless_width()（板级默认带宽）
