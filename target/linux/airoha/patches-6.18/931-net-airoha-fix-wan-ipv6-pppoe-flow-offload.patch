@@ -1,0 +1,129 @@
+From: Ziwei Wu <wuziwei518@gmail.com>
+Subject: [PATCH] net: airoha: fix AN7581 WAN IPv6 PPPoE hardware flow offloading
+
+Fix three critical bugs in Airoha AN7581 PPE hardware flowtable offload
+that caused severe packet drops, NPU stalls, and throughput degradation
+(throttled down to tens of KB/s) on IPv6 PPPoE connections:
+
+1. Prevent routed L3 IPv6 packets from falling through to L2 subflow:
+   When an incoming routed IPv6 packet is looked up in ppe->foe_flow
+   and no matching entry is found (or not committed), the execution
+   previously fell through unconditionally into l2_lookup. Since the
+   client MAC belongs to br-lan, it was erroneously committed as an
+   L2 subflow entry, which clobbered the PPPoE session ID in src_mac_hi
+   with 0xf and redirected PSE_PORT to 6 (NPU coprocessor), leading to
+   an immediate black hole. Only true PPE_PKT_TYPE_BRIDGE packets should
+   fall through to l2_lookup.
+
+2. Preserve PPPoE session ID when committing IPv6 subflows:
+   Masking src_mac_hi unconditionally with 0xf stripped the lower 16-bit
+   PPPoE session ID (AIROHA_FOE_MAC_PPPOE_ID). Preserve existing PPPoE ID
+   bits.
+
+3. Exempt IPv6 entries from unverified AN7581 NPU counter stats updates:
+   Like native L2B entries, AN7581 does not expose a compatible NPU
+   flow-stats counter layout for IPv6 route entries. Updating NPU stats
+   or reading unverified counters stalls the hardware NPU pipeline.
+
+4. Account for PPPoE and double VLAN overhead in MTU / xmit frame size:
+   Hardcoding 1500 + VLAN_ETH_HLEN (1518 bytes) truncated standard 1500-byte
+   IPv6 packets traversing PPPoE (which requires 8 bytes PPPOE_SES_HLEN)
+   and VLAN tags, causing silent hardware drops at the PPE egress. Add 16
+   bytes headroom to WAN MTU0/MTU1 and PPE frame limit.
+
+Signed-off-by: Ziwei Wu <wuziwei518@gmail.com>
+
+Rebased onto the 6.18.55 tree of this fork.  The original hunk for
+airoha_ppe_foe_commit_subflow_entry() had off-by-one context counts
+(7/8 instead of 8/9) and the new condition in
+airoha_ppe_foe_insert_entry() was one line over 80 columns; both were
+regenerated here, semantics unchanged.  airoha_ppe_foe_entry_get_stats()
+was also de-duplicated to read the packet type once.
+Link: https://github.com/wuziwei/ponwrt-ZN504-HG5585F/commit/eb0f26122c
+---
+--- a/drivers/net/ethernet/airoha/airoha_eth.c
++++ b/drivers/net/ethernet/airoha/airoha_eth.c
+@@ -2339,10 +2339,14 @@
+ 	struct airoha_gdm_dev *dev = netdev_priv(netdev);
+ 
+ 	airoha_ppe_set_xmit_frame_size(dev);
+-	if (!airoha_is_lan_gdm_dev(dev))
++	if (!airoha_is_lan_gdm_dev(dev)) {
+ 		airoha_fe_rmw(dev->eth, REG_WAN_MTU0, WAN_MTU0_MASK,
+ 			      FIELD_PREP(WAN_MTU0_MASK,
+-					 VLAN_ETH_HLEN + netdev->mtu));
++					 VLAN_ETH_HLEN + 16 + netdev->mtu));
++		airoha_fe_rmw(dev->eth, REG_WAN_MTU0, WAN_MTU1_MASK,
++			      FIELD_PREP(WAN_MTU1_MASK,
++					 VLAN_ETH_HLEN + 16 + netdev->mtu));
++	}
+ }
+ 
+ static int airoha_dev_open(struct net_device *netdev)
+--- a/drivers/net/ethernet/airoha/airoha_ppe.c
++++ b/drivers/net/ethernet/airoha/airoha_ppe.c
+@@ -127,7 +127,7 @@
+ 		if (netif_running(netdev))
+ 			len = max_t(u32, len, netdev->mtu);
+ 	}
+-	len += VLAN_ETH_HLEN;
++	len += VLAN_ETH_HLEN + 16;
+ 
+ 	ppe_id = !airoha_is_lan_gdm_dev(dev) && airoha_ppe_is_enabled(eth, 1);
+ 	index = port->id == AIROHA_GDM4_IDX ? 7 : port->id;
+@@ -748,8 +748,9 @@
+ 	int ppe_num_stats_entries;
+ 	u8 nbq;
+ 
+-	/* No verified NPU counter layout for native AN7581 L2B entries. */
+-	if (airoha_is_7581(ppe->eth) && type == PPE_PKT_TYPE_BRIDGE)
++	/* No verified NPU counter layout for native AN7581 L2B and IPv6 entries. */
++	if (airoha_is_7581(ppe->eth) &&
++	    (type == PPE_PKT_TYPE_BRIDGE || type >= PPE_PKT_TYPE_IPV6_ROUTE_3T))
+ 		return;
+ 
+ 	ppe_num_stats_entries = airoha_ppe_get_total_num_stats_entries(ppe);
+@@ -1041,7 +1042,8 @@
+ 		 * source mac address
+ 		 */
+ 		hwe.ipv6.l2.src_mac_hi = FIELD_PREP(AIROHA_FOE_MAC_SMAC_ID,
+-						    0xf);
++						    0xf) |
++					 (hwe.ipv6.l2.src_mac_hi & AIROHA_FOE_MAC_PPPOE_ID);
+ 	} else {
+ 		memcpy(&hwe.bridge.l2, &e->data.bridge.l2,
+ 		       sizeof(hwe.bridge.l2));
+@@ -1107,6 +1109,14 @@
+ 	if (commit_done)
+ 		goto unlock;
+ 
++	/* Only bridged frames have an L2 subflow to inherit: a routed frame
++	 * falling through here would be committed under the client MAC and
++	 * clobber the PPPoE session ID kept in src_mac_hi.
++	 */
++	if (FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, hwe->ib1) !=
++	    PPE_PKT_TYPE_BRIDGE)
++		goto unlock;
++
+ l2_lookup:
+ 	airoha_ppe_foe_set_bridge_addrs(&br, eth_hdr(skb));
+ 	e = rhashtable_lookup_fast(&ppe->l2_flows, &br,
+@@ -1492,12 +1502,15 @@
+ 	int ppe_num_stats_entries;
+ 	struct airoha_npu *npu;
+ 	struct airoha_foe_entry *hwe;
+-	u32 index;
++	u32 index, type;
+ 
+ 	hwe = ppe->foe + hash * sizeof(*hwe);
++	type = FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, READ_ONCE(hwe->ib1));
++	/* No verified NPU counter layout for native AN7581 L2B and IPv6
++	 * entries: touching the counters stalls the hardware pipeline.
++	 */
+ 	if (airoha_is_7581(eth) &&
+-	    FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, READ_ONCE(hwe->ib1)) ==
+-	    PPE_PKT_TYPE_BRIDGE)
++	    (type == PPE_PKT_TYPE_BRIDGE || type >= PPE_PKT_TYPE_IPV6_ROUTE_3T))
+ 		return;
+ 
+ 	ppe_num_stats_entries = airoha_ppe_get_total_num_stats_entries(ppe);
