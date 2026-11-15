@@ -62,6 +62,7 @@
 | 25 | `airoha/patches-6.18` | **补上游 `928` / `999`**（PPE bind-rate debugfs、EN7581/AN7583 把 BPDU/LLDP trap 到 conduit）＋ `606`/`925` 两处 debug 格式符修正。只做**定点 backport**，不做全量 merge（§8.4） | 上游跟进 |
 | 26 | `airoha/patches-6.18` | **`931`：AN7581 开 PPE 硬件流卸载后 IPv6 PPPoE 掉到几十 KB/s** —— L2 subflow 覆写 PPPoE ID、NPU stats 死锁、1518 字节 MTU 越界。移植自 `wuziwei/ponwrt-ZN504-HG5585F`，**ZN504XG-D 实测**（§2.9） | 硬件修复 |
 | 27 | `.github/workflows` | **ccache 持久化**：把 `.ccache` 存进 Actions 缓存，指纹改用编译器版本，`an7581`/`an7583` 各一份（§5.6） | 工具 |
+| 28 | `airoha/base-files` | **默认开 PPE 硬件流卸载**（`99-hw-flow-offload`，仅 `an7581`/`an7583`）：只在配置里还没有该键时才写，保留配置升级与用户显式关闭都不覆盖（§2.9） | 默认值 |
 
 ---
 
@@ -891,7 +892,7 @@ dmesg | grep -iE "eip93|safexcel"
 **上机验证清单**（先开硬件卸载，再关掉做对照 —— 不做对照就无法区分"补丁有效"和"本来就不掉速"）：
 
 ```sh
-# 1) 打开硬件流卸载（本仓库默认只开软件卸载：firewall.config 里只有 flow_offloading 1）
+# 1) 硬件流卸载：新镜像默认已写 flow_offloading_hw=1（见下）；老配置或关过的用这两行恢复
 uci set firewall.@defaults[0].flow_offloading='1'
 uci set firewall.@defaults[0].flow_offloading_hw='1'
 uci commit firewall && /etc/init.d/firewall restart
@@ -910,9 +911,17 @@ uci set firewall.@defaults[0].flow_offloading_hw=0 && uci commit firewall
 /etc/init.d/firewall restart          # 对照完再 set 回 1，然后 commit + restart
 ```
 
-> ⚠️ **不要**因为这份补丁就默认打开 `flow_offloading_hw`。`package/network/config/firewall/files/firewall.config`
-> 里默认仍只有 `flow_offloading 1`（软件）；是否改默认要单独决定（见下面的实测记录）。
+> `flow_offloading_hw` 现在**默认打开**（只对 `an7581`/`an7583`），由
+> `target/linux/airoha/base-files/etc/uci-defaults/99-hw-flow-offload` 写入：脚本先看
+> `/proc/device-tree/compatible` 是不是 an7581/an7583，再只在 `/etc/config/firewall`
+> **还没有** `flow_offloading_hw` 这个键时写 `1`。因此保留配置升级、以及任何显式
+> `flow_offloading_hw=0` 都不会被覆盖；`flow_offloading=0` 时也不写（没有软件卸载，
+> 硬件标志是空的）。`firewall.config` 里的出厂默认仍然是软件卸载，两者不冲突。
+> 要关掉：`uci set firewall.@defaults[0].flow_offloading_hw=0 && uci commit firewall`。
 > 另外第 4 处改动**不依赖**卸载开关，编译进内核就生效（MTU 余量），这也是它最没有争议的一条。
+>
+> **覆盖面**：目前只有 ZN504XG-D 一台实测（上表）。其余 5 款 an7581 与 an7583 共用同一份
+> 驱动与补丁，但**没有上机**；默认值先按"同源"放开，出问题用上面那行关掉即可。
 
 **实测记录（2026-11-15，ZN504XG-D，`r42600+88-03c1345447` 即本补丁所在 HEAD）`[实测]`**
 
@@ -923,7 +932,7 @@ uci set firewall.@defaults[0].flow_offloading_hw=0 && uci commit firewall
 | `928` | `/sys/kernel/debug/ppe/bind_rate` 存在，读到 `ppe0/ppe1: l2b=30 l3=30`；写 `30 30` 成功回读一致 |
 | `931` 生效方向 | **从 LAN 侧**发起 IPv6 大文件下载（约 320 Mbps）时，`/sys/kernel/debug/ppe/entries` 里对应流是 `BND IPv6 5T`、`vlan=<PPPoE VLAN>` ⇒ IPv6 PPPoE 转发流量确实落在 PPE 硬件表里 |
 | `931` 对照 | 关掉 `flow_offloading_hw`（`nft list flowtables` 里 `flags offload` 消失）后，同一条流变 `UNB`、`BND` 条目为 0；18 秒窗口的 CPU idle 从 6178 tick（开）降到 5022 tick（关，4 核）|
-| `999` | 未验证：设备上没装 `lldpd`，也没有会发 LLDP 的邻居；只能算编译通过 |
+| `999` | **寄存器级已确认**：`BPC=0x0E160A16`、`RGAC1=RGAC2=0x0A160A16` ⇒ BPDU/PAE/`:01`/`:02`/`:03`/`:0E` 的 trap 位都开着；`MFC=0x5C5C5CE0` ⇒ `CPU_EN=1`、`CPU_PORT=6`。而 `MT753X_MFC` 这几位在驱动里**只有** `mt753x_conduit_state_change()` 一处写（`mt7530.c:3295`），probe 时 `SYS_CTRL_SW_RST\|REG_RST` 又会复位整个交换芯片 ⇒ 不可能是 bootloader 残留，999 新增的 EN7581/AN7583 分支确实执行了。**端到端 LLDP 未验**：台架上没有任何设备发 LLDP/BPDU/802.1X（lan1/lan3/lan4 上 `-Q in` 各抓 25 s 都是 0 包，本机 NetworkManager 也看不到 LLDP 邻居），也没有空闲口做自环 |
 | 已知局限 | **没有对旧内核做 A/B**（没复现出"几十 KB/s"）。所以这证明的是"开着硬件卸载、IPv6 PPPoE 能正常工作且真的走 PPE"，不是"原缺陷必然复现、补丁必然修好它" |
 
 > 注意第 3 步必须**从 LAN 侧**发起：PPE 只卸载**转发**流量，在路由器本机上 `curl` 走的是本地
