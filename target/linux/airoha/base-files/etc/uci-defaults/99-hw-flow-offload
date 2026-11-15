@@ -1,0 +1,35 @@
+#!/bin/sh
+#
+# AN7581/AN7583: default to PPE hardware flow offloading.
+#
+# Everything this needs is in this target: firewall4's bridge flowtable patch
+# (package/network/config/firewall4/patches/001-*), the PPE offload metadata
+# patches in target/linux/airoha/patches-6.18, and 931, which keeps IPv6 over
+# PPPoE from black-holing once a flow is handed to the PPE.  Verified on a
+# ZN504XG-D with PPPoE + IPv6 (README 2.9): the LAN-side IPv6 flow shows up as
+# "BND IPv6 5T" in ppe/entries, and the same download with flow_offloading_hw=0
+# stays UNB and costs more CPU.
+#
+# an7581/an7583 only: en7523 is a different SoC and none of the above has been
+# looked at there.
+compat="$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null)"
+case "$compat" in
+	*airoha,an7581*|*airoha,an7583*) ;;
+	*) exit 0 ;;
+esac
+
+[ -f /etc/config/firewall ] || exit 0
+uci -q get firewall.@defaults[0] >/dev/null || exit 0
+
+# Seed only, never override: a kept config (sysupgrade) or someone who turned
+# software offloading off on purpose always wins.  flow_offloading_hw without
+# flow_offloading is inert, so do not add it in that case either.
+[ "$(uci -q get firewall.@defaults[0].flow_offloading)" = "0" ] && exit 0
+
+[ -n "$(uci -q get firewall.@defaults[0].flow_offloading)" ] || \
+	uci -q set firewall.@defaults[0].flow_offloading='1'
+[ -n "$(uci -q get firewall.@defaults[0].flow_offloading_hw)" ] || \
+	uci -q set firewall.@defaults[0].flow_offloading_hw='1'
+uci -q commit firewall
+
+exit 0
