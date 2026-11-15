@@ -60,7 +60,7 @@
 | 23 | `configs/release.config` | 把 `luci-app-airoha-npu` 加进发布配置（§5.4） | 默认值 |
 | 24 | `build` | **裸 `make` 也套 feed 补丁**（`include/toplevel.mk` 的 `feed-patches-apply`，任何目标都先走它）；`apply.sh` 把"git 用不了"与"补丁真冲突"分开报并新增 `--reset`；`build.sh`/`make` 增加 git 与 `REVISION=unknown` 自检；修正 `build_dir` 清理路径（kmod 包在 `linux-<板>_<子目标>/<包>`，原来没清到，`an7583` 里躺着 10-05 的旧源码）（§5.1.1、§5.2.1） | 工具/根因修复 |
 | 25 | `airoha/patches-6.18` | **补上游 `928` / `999`**（PPE bind-rate debugfs、EN7581/AN7583 把 BPDU/LLDP trap 到 conduit）＋ `606`/`925` 两处 debug 格式符修正。只做**定点 backport**，不做全量 merge（§8.4） | 上游跟进 |
-| 26 | `airoha/patches-6.18` | **`931`：AN7581 开 PPE 硬件流卸载后 IPv6 PPPoE 掉到几十 KB/s** —— L2 subflow 覆写 PPPoE ID、NPU stats 死锁、1518 字节 MTU 越界。移植自 `wuziwei/ponwrt-ZN504-HG5585F`，**未上机**（§2.9） | 硬件修复（待验证） |
+| 26 | `airoha/patches-6.18` | **`931`：AN7581 开 PPE 硬件流卸载后 IPv6 PPPoE 掉到几十 KB/s** —— L2 subflow 覆写 PPPoE ID、NPU stats 死锁、1518 字节 MTU 越界。移植自 `wuziwei/ponwrt-ZN504-HG5585F`，**ZN504XG-D 实测**（§2.9） | 硬件修复 |
 | 27 | `.github/workflows` | **ccache 持久化**：把 `.ccache` 存进 Actions 缓存，指纹改用编译器版本，`an7581`/`an7583` 各一份（§5.6） | 工具 |
 
 ---
@@ -865,7 +865,7 @@ dmesg | grep -iE "eip93|safexcel"
 
 ---
 
-### 2.9 AN7581 开硬件流卸载后 IPv6 PPPoE 掉到几十 KB/s `[未上机]`
+### 2.9 AN7581 开硬件流卸载后 IPv6 PPPoE 掉到几十 KB/s `[实测]`
 
 **来源**：`wuziwei/ponwrt-ZN504-HG5585F` 的
 `931-net-airoha-fix-wan-ipv6-pppoe-flow-offload.patch`（commit `eb0f2612`）。
@@ -900,16 +900,34 @@ uci commit firewall && /etc/init.d/firewall restart
 nft list flowtables | head -20
 dmesg | grep -iE 'ppe|npu|airoha.*(err|timeout|reset)'
 
-# 3) v6 双栈吞吐 + 边界大小不被硬件丢
-iperf3 -6 -c <peer>
-ping -6 -s 1452 -M do <peer>      # PPPoE MTU 1492 下的最大 v6 载荷
+# 3) 从 LAN 侧（不是路由器本机）发起 v6 大文件下载，同时看 FOE：
+#    对应 5T 流应为 BND，且 vlan 是 PPPoE VLAN
+curl -6 -o /dev/null https://<大文件> &
+cat /sys/kernel/debug/ppe/entries | grep -E 'BND IPv6'
 
-# 4) 对照：把 flow_offloading_hw 关掉重测，应回到"不开硬件卸载"的旧行为
+# 4) 对照：关掉 flow_offloading_hw 重来，同一条流应变 UNB、BND 条目归零
+uci set firewall.@defaults[0].flow_offloading_hw=0 && uci commit firewall
+/etc/init.d/firewall restart          # 对照完再 set 回 1，然后 commit + restart
 ```
 
 > ⚠️ **不要**因为这份补丁就默认打开 `flow_offloading_hw`。`package/network/config/firewall/files/firewall.config`
-> 里默认仍只有 `flow_offloading 1`（软件）；硬件卸载是否默认开，要等上表跑完再决定。
+> 里默认仍只有 `flow_offloading 1`（软件）；是否改默认要单独决定（见下面的实测记录）。
 > 另外第 4 处改动**不依赖**卸载开关，编译进内核就生效（MTU 余量），这也是它最没有争议的一条。
+
+**实测记录（2026-11-15，ZN504XG-D，`r42600+88-03c1345447` 即本补丁所在 HEAD）`[实测]`**
+
+| 项 | 结果 |
+|---|---|
+| 固件 | `DISTRIB_REVISION=r42600+88-03c1345447`（= 本补丁所在 HEAD）；`uname -v` 的内核构建时间 10:48 UTC（本地 18:48）早于当天 19:28 的出包时间 ⇒ 不是旧镜像 |
+| 拓扑 | WAN = `pppoe` over `pon0.<PPPoE VLAN>`，`pppoe-wan` mtu 1492；`flow_offloading_hw=1`，`inet`/`bridge` 两个 flowtable 都带 `flags offload` |
+| `928` | `/sys/kernel/debug/ppe/bind_rate` 存在，读到 `ppe0/ppe1: l2b=30 l3=30`；写 `30 30` 成功回读一致 |
+| `931` 生效方向 | **从 LAN 侧**发起 IPv6 大文件下载（约 320 Mbps）时，`/sys/kernel/debug/ppe/entries` 里对应流是 `BND IPv6 5T`、`vlan=<PPPoE VLAN>` ⇒ IPv6 PPPoE 转发流量确实落在 PPE 硬件表里 |
+| `931` 对照 | 关掉 `flow_offloading_hw`（`nft list flowtables` 里 `flags offload` 消失）后，同一条流变 `UNB`、`BND` 条目为 0；18 秒窗口的 CPU idle 从 6178 tick（开）降到 5022 tick（关，4 核）|
+| `999` | 未验证：设备上没装 `lldpd`，也没有会发 LLDP 的邻居；只能算编译通过 |
+| 已知局限 | **没有对旧内核做 A/B**（没复现出"几十 KB/s"）。所以这证明的是"开着硬件卸载、IPv6 PPPoE 能正常工作且真的走 PPE"，不是"原缺陷必然复现、补丁必然修好它" |
+
+> 注意第 3 步必须**从 LAN 侧**发起：PPE 只卸载**转发**流量，在路由器本机上 `curl` 走的是本地
+> 出口路径，看不到 `BND` 条目 —— 这点我踩过一次，记在这里。
 
 ---
 
